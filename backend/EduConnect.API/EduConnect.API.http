@@ -1,0 +1,6 @@
+@EduConnect.API_HostAddress = http://localhost:5230
+
+GET {{EduConnect.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

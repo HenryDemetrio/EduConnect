@@ -1,0 +1,6 @@
+﻿namespace EduConnect.API.DTOs
+{
+    public class namespace_EduConnect
+    {
+    }
+}

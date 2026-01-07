@@ -1,37 +1,16 @@
-Funcionalidades
-Login (index.html): Formulário responsivo com redirecionamento simulado para o dashboard.
+# React + Vite
 
-Dashboard: Menu de navegação, gráfico de desempenho, calendário interativo, notificações e alternância de tema claro/escuro.
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-Listagens (students.html / teachers.html): Tabelas com filtro de busca, botões de ação e link para cadastro.
+Currently, two official plugins are available:
 
-Cadastros (add_student.html / add_teacher.html): Formulários com validações em JS e redirecionamento simulado.
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
 
-CSS: Estilo unificado e responsivo para todas as páginas, com suporte a temas.
+## React Compiler
 
-JS: Scripts para tema, validações, filtros, gráfico, calendário e notificações.
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
+## Expanding the ESLint configuration
 
-ESQUEMA DE PASTAS:
-
-projeto/
-├── index.html              -> Página de **Login** (página inicial do sistema)
-├── dashboard.html          -> Página **Dashboard** pós-login (contém menu, gráficos, etc.)
-├── students.html           -> Página de **Lista de Alunos** (tabela com filtro de alunos)
-├── add_student.html        -> Página de **Cadastro de Aluno** (formulário de aluno)
-├── teachers.html           -> Página de **Lista de Professores** (tabela com filtro de professores)
-├── add_teacher.html        -> Página de **Cadastro de Professor** (formulário de professor)
-├── assets/                 -> Pasta de arquivos estáticos (CSS, JS, imagens, etc.)
-│   ├── css/
-│   │   └── style.css       -> Arquivo de estilos **CSS** global (vale para todas as páginas)
-│   ├── js/
-│   │   └── script.js       -> Arquivo **JavaScript** principal (interatividade: tema, validações, etc.)
-│   └── images/             -> Pasta para **imagens** (logos, ícones, etc. caso necessário)
-
- Tema escuro com localStorage
-
- Feedback visual após submissão de formulário
-
- Layout com Flexbox ou CSS Grid
-
- Responsividade completa no mobile
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
