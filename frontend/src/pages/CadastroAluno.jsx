@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { useTheme } from "../context/ThemeContext";
 import { apiJson } from "../services/api";
 
@@ -18,15 +18,20 @@ function inputStyle(theme) {
 export default function CadastroAluno() {
   const { theme } = useTheme();
   const navigate = useNavigate();
+  const { id } = useParams();
+
+  const isEdit = !!id;
 
   const [loading, setLoading] = useState(false);
+  const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState("");
+
+  const [emailInstitucional, setEmailInstitucional] = useState("");
 
   const [form, setForm] = useState({
     nome: "",
-    email: "",
     ra: "",
-    senha: "", // opcional (se o backend suportar)
+    emailContato: "",
   });
 
   function handleChange(e) {
@@ -34,54 +39,58 @@ export default function CadastroAluno() {
     setForm((prev) => ({ ...prev, [name]: value }));
   }
 
+  useEffect(() => {
+    async function load() {
+      if (!isEdit) return;
+      try {
+        setCarregando(true);
+        setErro("");
+        const data = await apiJson(`/alunos/${id}`);
+        setForm({
+          nome: data?.nome ?? "",
+          ra: data?.ra ?? "",
+          emailContato: data?.emailContato ?? "",
+        });
+        setEmailInstitucional(data?.emailInstitucional ?? "");
+      } catch (e) {
+        setErro(e?.payload?.message || "Não foi possível carregar o aluno.");
+      } finally {
+        setCarregando(false);
+      }
+    }
+    load();
+  }, [id, isEdit]);
+
   async function handleSubmit(e) {
     e.preventDefault();
     setErro("");
 
-    if (!form.nome || !form.email || !form.ra) {
-      setErro("Preencha Nome, E-mail e RA.");
+    if (!form.nome?.trim() || !form.ra?.trim() || !form.emailContato?.trim()) {
+      setErro("Preencha Nome, RA e E-mail de contato.");
       return;
     }
 
     setLoading(true);
 
-    // payload mínimo (robusto)
-    const basePayload = {
+    const payload = {
       nome: form.nome.trim(),
-      email: form.email.trim(),
       ra: form.ra.trim(),
+      emailContato: form.emailContato.trim(),
     };
 
-    // tenta com senha se preenchida; se der 400, tenta sem senha (compatibilidade)
-    const payloadComSenha = form.senha.trim()
-      ? { ...basePayload, senha: form.senha.trim() }
-      : basePayload;
-
     try {
-      await apiJson("/alunos", "POST", payloadComSenha);
+      if (isEdit) {
+        await apiJson(`/alunos/${id}`, "PUT", payload);
+      } else {
+        await apiJson("/alunos", "POST", payload);
+      }
       navigate("/admin/alunos");
     } catch (e1) {
-      // 409: duplicidade
       if (e1?.status === 409) {
-        setErro(e1?.payload?.message || "Já existe aluno com esse e-mail/RA.");
-        setLoading(false);
-        return;
+        setErro(e1?.payload?.message || "Conflito: RA duplicado.");
+      } else {
+        setErro(e1?.payload?.message || "Erro ao salvar aluno.");
       }
-
-      // fallback: backend pode não aceitar "senha"
-      if (form.senha.trim() && e1?.status === 400) {
-        try {
-          await apiJson("/alunos", "POST", basePayload);
-          navigate("/admin/alunos");
-          return;
-        } catch (e2) {
-          setErro(e2?.payload?.message || "Erro ao cadastrar aluno.");
-          setLoading(false);
-          return;
-        }
-      }
-
-      setErro(e1?.payload?.message || "Erro ao cadastrar aluno.");
     } finally {
       setLoading(false);
     }
@@ -92,10 +101,12 @@ export default function CadastroAluno() {
       <main className="dashboard-main">
         <div style={{ marginBottom: 14 }}>
           <h1 className="dashboard-title" style={{ marginBottom: 6 }}>
-            Novo aluno
+            {isEdit ? "Editar aluno" : "Novo aluno"}
           </h1>
           <p className="dashboard-subtitle">
-            Cadastro rápido para aparecer na lista e ser matriculado em turmas.
+            {isEdit
+              ? "Ajuste os dados do aluno. O acesso é gerado na aprovação da matrícula."
+              : "Cadastro rápido para aparecer na lista e ser matriculado em turmas."}
           </p>
         </div>
 
@@ -109,46 +120,47 @@ export default function CadastroAluno() {
                   name="nome"
                   value={form.nome}
                   onChange={handleChange}
-                  placeholder="Ex: Ana Souza"
+                  placeholder="Ex: Marcos Martins"
                   style={inputStyle(theme)}
+                  disabled={carregando}
                 />
               </div>
 
               <div className="form-field">
-                <label htmlFor="email">E-mail institucional *</label>
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  value={form.email}
-                  onChange={handleChange}
-                  placeholder="nome@educonnect.com"
-                  style={inputStyle(theme)}
-                />
-              </div>
-
-              <div className="form-field">
-                <label htmlFor="ra">RA / Matrícula *</label>
+                <label htmlFor="ra">RA *</label>
                 <input
                   id="ra"
                   name="ra"
                   value={form.ra}
                   onChange={handleChange}
-                  placeholder="Ex: EC202401"
+                  placeholder="Ex: 2026A004"
                   style={inputStyle(theme)}
+                  disabled={carregando}
                 />
               </div>
 
               <div className="form-field">
-                <label htmlFor="senha">Senha inicial (opcional)</label>
+                <label htmlFor="emailContato">E-mail de contato *</label>
                 <input
-                  id="senha"
-                  name="senha"
-                  type="password"
-                  value={form.senha}
+                  id="emailContato"
+                  name="emailContato"
+                  type="email"
+                  value={form.emailContato}
                   onChange={handleChange}
-                  placeholder="Se o backend suportar"
+                  placeholder="Ex: marcos.martins@tivit.com"
                   style={inputStyle(theme)}
+                  disabled={carregando}
+                />
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="emailInstitucional">E-mail institucional (gerado)</label>
+                <input
+                  id="emailInstitucional"
+                  value={emailInstitucional}
+                  placeholder="Gerado após aprovação da matrícula"
+                  style={inputStyle(theme)}
+                  disabled
                 />
               </div>
             </div>
@@ -158,14 +170,14 @@ export default function CadastroAluno() {
             <div className="form-footer">
               <button
                 type="button"
-                className="btn-secondary"
+                className="btn-secondary btn-small"
                 onClick={() => navigate("/admin/alunos")}
-                disabled={loading}
+                disabled={loading || carregando}
               >
                 Cancelar
               </button>
-              <button type="submit" className="btn-primary" disabled={loading}>
-                {loading ? "Salvando..." : "Salvar aluno"}
+              <button type="submit" className="btn-primary btn-small" disabled={loading || carregando}>
+                {loading ? "Salvando..." : "Salvar"}
               </button>
             </div>
           </form>

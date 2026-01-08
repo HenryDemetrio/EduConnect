@@ -167,10 +167,11 @@ body.index-page .logo-bar{ justify-content: center; }
   margin-bottom: 16px;
   text-align: center;   /* << centraliza o texto do título */
 }
-form{ display: flex; flex-direction: column; gap: 12px; }
-label{ font-weight: 700; }
+/* ✅ LOGIN: estilos NÃO podem vazar pro app inteiro */
+body.index-page form{ display: flex; flex-direction: column; gap: 12px; }
+body.index-page label{ font-weight: 700; }
 
-input{
+body.index-page input{
   width: 100%;
   padding: 12px 10px;
   border-radius: 10px;
@@ -178,9 +179,12 @@ input{
   background: var(--white);
   outline: none;
 }
-input:focus{ border-color: var(--brand-red); box-shadow: 0 0 0 3px rgba(215,23,47,.15); }
+body.index-page input:focus{
+  border-color: var(--brand-red);
+  box-shadow: 0 0 0 3px rgba(215,23,47,.15);
+}
 
-button{
+body.index-page button{
   padding: 14px 16px;
   border: none;
   border-radius: 12px;
@@ -191,8 +195,9 @@ button{
   cursor: pointer;
   transition: filter .18s ease, transform .06s ease;
 }
-button:hover{ filter: brightness(.95); }
-button:active{ transform: translateY(1px); }
+body.index-page button:hover{ filter: brightness(.95); }
+body.index-page button:active{ transform: translateY(1px); }
+
 
 .error-message{
   color: #d32f2f;

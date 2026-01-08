@@ -28,19 +28,15 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/Matricula" element={<Matricula />}/>
-
+      <Route path="/matricula" element={<Matricula />} />
 
       {/* autenticado */}
       <Route element={<RequireAuth />}>
         <Route element={<AppLayout />}>
-          {/* Home */}
           <Route path="/dashboard" element={<Dashboard />} />
-
-          {/* Config (todos autenticados) */}
           <Route path="/config" element={<Configuracoes />} />
 
-          {/* Agenda (somente Admin e Professor) */}
+          {/* Agenda (Admin + Professor) */}
           <Route element={<RequireRole allow={["Admin", "Professor"]} />}>
             <Route path="/professor/agenda" element={<AgendaAvisos />} />
             <Route path="/admin/agenda" element={<AgendaAvisos />} />
@@ -60,6 +56,7 @@ export default function App() {
           <Route element={<RequireRole allow={["Admin"]} />}>
             <Route path="/admin/alunos" element={<ListaAlunos />} />
             <Route path="/admin/alunos/novo" element={<CadastroAluno />} />
+            <Route path="/admin/alunos/:id/editar" element={<CadastroAluno />} />
 
             <Route path="/admin/professores" element={<ListaProfessores />} />
             <Route path="/admin/professores/novo" element={<CadastroProfessor />} />

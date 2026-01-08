@@ -19,11 +19,18 @@ export default function AdminListPage({
   title,
   subtitle,
   endpoint,
-  columns,       // [{ key, label }]
-  mapItem,       // (raw) => { ...normalized }
+  columns,
+  mapItem,
   createTo,
   searchPlaceholder,
-  searchFn,      // (item, queryLower) => boolean
+  searchFn,
+  rowActions,
+  actionsLabel = "Ações",
+  children,
+
+  // ✅ NOVOS
+  toolbarExtra, // (theme) => JSX
+  filterFn, // (item) => boolean
 }) {
   const { theme } = useTheme();
 
@@ -31,6 +38,8 @@ export default function AdminListPage({
   const [erro, setErro] = useState("");
   const [items, setItems] = useState([]);
   const [busca, setBusca] = useState("");
+
+  const hasActions = typeof rowActions === "function";
 
   async function carregar() {
     try {
@@ -49,13 +58,17 @@ export default function AdminListPage({
 
   useEffect(() => {
     carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [endpoint]);
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((it) => searchFn(it, q));
-  }, [items, busca, searchFn]);
+    const extraOk = (it) => (typeof filterFn === "function" ? !!filterFn(it) : true);
+
+    let base = items.filter(extraOk);
+    if (!q) return base;
+    return base.filter((it) => searchFn(it, q));
+  }, [items, busca, searchFn, filterFn]);
 
   return (
     <div className="dashboard-shell">
@@ -70,22 +83,30 @@ export default function AdminListPage({
             className="list-toolbar"
             style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}
           >
-            <div style={{ minWidth: 280, flex: 1 }}>
-              <label className="teacher-label">Buscar</label>
-              <input
-                value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-                placeholder={searchPlaceholder}
-                style={{ ...inputStyle(theme), marginTop: 6 }}
-              />
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", flex: 1, minWidth: 280 }}>
+              <div style={{ minWidth: 280, flex: 1 }}>
+                <label className="field-label">Buscar</label>
+                <input
+                  value={busca}
+                  onChange={(e) => setBusca(e.target.value)}
+                  placeholder={searchPlaceholder}
+                  style={{ ...inputStyle(theme), marginTop: 6 }}
+                />
+              </div>
+
+              {typeof toolbarExtra === "function" && (
+                <div style={{ minWidth: 240 }}>
+                  {toolbarExtra(theme)}
+                </div>
+              )}
             </div>
 
-            <div style={{ display: "flex", gap: 10, alignItems: "end" }}>
-              <button type="button" className="btn-secondary" onClick={carregar}>
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+              <button type="button" className="btn-secondary btn-small" onClick={carregar}>
                 Atualizar
               </button>
 
-              <Link to={createTo} className="btn-primary btn-small">
+              <Link to={createTo} className="btn-primary btn-inline btn-small">
                 + Novo
               </Link>
             </div>
@@ -98,20 +119,21 @@ export default function AdminListPage({
                   {columns.map((c) => (
                     <th key={c.key}>{c.label}</th>
                   ))}
+                  {hasActions && <th className="col-actions">{actionsLabel}</th>}
                 </tr>
               </thead>
 
               <tbody>
                 {loading && (
-                  <tr><td colSpan={columns.length} className="table-empty">Carregando...</td></tr>
+                  <tr><td colSpan={columns.length + (hasActions ? 1 : 0)} className="table-empty">Carregando...</td></tr>
                 )}
 
                 {!loading && erro && (
-                  <tr><td colSpan={columns.length} className="table-empty">{erro}</td></tr>
+                  <tr><td colSpan={columns.length + (hasActions ? 1 : 0)} className="table-empty">{erro}</td></tr>
                 )}
 
                 {!loading && !erro && filtrados.length === 0 && (
-                  <tr><td colSpan={columns.length} className="table-empty">Nenhum registro encontrado.</td></tr>
+                  <tr><td colSpan={columns.length + (hasActions ? 1 : 0)} className="table-empty">Nenhum registro encontrado.</td></tr>
                 )}
 
                 {!loading && !erro && filtrados.map((it) => (
@@ -119,12 +141,21 @@ export default function AdminListPage({
                     {columns.map((c) => (
                       <td key={c.key}>{it[c.key]}</td>
                     ))}
+                    {hasActions && (
+                      <td className="col-actions">
+                        <div className="row-actions">
+                          {rowActions(it, carregar)}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </section>
+
+        {children}
       </main>
     </div>
   );
