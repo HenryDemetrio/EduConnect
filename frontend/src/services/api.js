@@ -1,4 +1,4 @@
-const BASE_URL = import.meta.env.VITE_API_URL || "https://localhost:7071";
+const BASE_URL = import.meta.env.VITE_API_URL || "https://localhost:5230";
 
 export async function apiRequest(path, options = {}) {
   const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;

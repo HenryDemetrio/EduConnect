@@ -49,8 +49,23 @@ img, svg { transition: filter 0.25s ease, opacity 0.25s ease; }
 /* =========================
    BUTTONS
 ========================= */
+/* =========================
+   BUTTONS
+========================= */
+
+.btn-primary,
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+  height: 38px;               /* <- trava pra não virar bolota */
+  line-height: 1;
+}
+
 .btn-primary {
-  width: 100%;
+  width: 100%;                /* continua full em formulários */
   padding: 10px 14px;
   border-radius: 999px;
   border: none;
@@ -60,8 +75,6 @@ img, svg { transition: filter 0.25s ease, opacity 0.25s ease; }
   cursor: pointer;
   font-size: 0.95rem;
 }
-.btn-primary:hover { filter: brightness(0.96); }
-.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .btn-secondary {
   padding: 8px 14px;
@@ -72,6 +85,19 @@ img, svg { transition: filter 0.25s ease, opacity 0.25s ease; }
   cursor: pointer;
   color: var(--text);
 }
+
+/* quando quiser botão "inline" (não full width) */
+.btn-inline {
+  width: auto !important;
+}
+
+/* variante pequena */
+.btn-small {
+  height: 34px;
+  padding: 6px 12px !important;
+  font-size: 0.82rem !important;
+}
+
 
 /* =========================
    AUTH / LOGIN / MATRÍCULA
@@ -718,3 +744,107 @@ body[data-theme="dark"] .app-nav a.active{ background:#f9fafb; color:#020617; }
   margin-top: 5px;
   background: rgba(2,132,199,0.9);
 }
+
+/* =========================
+   POLISH: TABELAS / AÇÕES / BOTÕES
+========================= */
+
+.field-label {
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.list-table thead th,
+.list-table tbody td {
+  padding: 12px 14px;
+}
+
+.table-empty {
+  padding: 18px 14px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.col-actions { width: 1%; white-space: nowrap; }
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.btn-small {
+  width: auto;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.form-footer .btn-primary {
+  width: auto;
+}
+
+.btn-ghost {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.btn-ghost:hover {
+  filter: brightness(0.98);
+}
+
+.btn-danger {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #ef4444;
+}
+
+/* fadezinho ao aprovar pagamento */
+.row-fade {
+  animation: rowFadeOut 260ms ease forwards;
+}
+@keyframes rowFadeOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(6px); }
+}
+
+/* variante pequena (você já usa no JSX) */
+.btn-small{
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+/* garante que botões "btn-secondary" não sejam alterados por estilos do calendário */
+.calendar-month-row button.btn-secondary,
+.cal-header button.btn-secondary{
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  box-shadow: none;
+}
+
+
+/* tira o "botão nativo" do browser e qualquer foco feio */
+button.btn-secondary,
+button.btn-primary,
+button.btn-ghost {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: transparent;
+}
+
+
+
+
+
+
