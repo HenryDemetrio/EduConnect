@@ -12,5 +12,9 @@
         public string TurmaCodigo { get; set; } = string.Empty;
 
         public DateTime DataMatricula { get; set; }
+
+        
+        public string StatusPagamento { get; set; } = "Pendente";
+        public DateTime? PagamentoAprovadoEm { get; set; }
     }
 }

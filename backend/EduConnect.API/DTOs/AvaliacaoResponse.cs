@@ -13,8 +13,8 @@
         public int DisciplinaId { get; set; }
         public string DisciplinaNome { get; set; } = null!;
 
-        public int ProfessorId { get; set; }
-        public string ProfessorNome { get; set; } = null!;
+        public int? ProfessorId { get; set; }
+        public string? ProfessorNome { get; set; } = null!;
 
         public decimal Nota { get; set; }
         public decimal Frequencia { get; set; }

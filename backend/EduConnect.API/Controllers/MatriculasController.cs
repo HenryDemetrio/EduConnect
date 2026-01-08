@@ -54,6 +54,8 @@ namespace EduConnect.API.Controllers
                 AlunoId = req.AlunoId,
                 TurmaId = req.TurmaId,
                 DataMatricula = DateTime.UtcNow,
+
+                // ✅ garantido
                 StatusPagamento = "Pendente",
                 PagamentoAprovadoEm = null
             };
@@ -61,11 +63,7 @@ namespace EduConnect.API.Controllers
             _ctx.Matriculas.Add(matricula);
             await _ctx.SaveChangesAsync();
 
-            return CreatedAtAction(
-                nameof(GetById),
-                new { id = matricula.Id },
-                new { id = matricula.Id }
-            );
+            return CreatedAtAction(nameof(GetById), new { id = matricula.Id }, new { id = matricula.Id });
         }
 
         [HttpGet]
@@ -73,17 +71,51 @@ namespace EduConnect.API.Controllers
         public async Task<ActionResult<IEnumerable<MatriculaResponse>>> GetAll()
         {
             var dados = await _ctx.Matriculas
+                .AsNoTracking()
                 .Include(m => m.Aluno)!.ThenInclude(a => a.Usuario)
                 .Include(m => m.Turma)
                 .Select(m => new MatriculaResponse
                 {
                     Id = m.Id,
                     AlunoId = m.AlunoId,
-                    AlunoNome = m.Aluno!.Usuario!.Nome,
+                    AlunoNome = m.Aluno != null && m.Aluno.Usuario != null ? m.Aluno.Usuario.Nome : "",
                     TurmaId = m.TurmaId,
-                    TurmaNome = m.Turma!.Nome,
-                    TurmaCodigo = m.Turma.Codigo,
-                    DataMatricula = m.DataMatricula
+                    TurmaNome = m.Turma != null ? m.Turma.Nome : "",
+                    TurmaCodigo = m.Turma != null ? m.Turma.Codigo : "",
+                    DataMatricula = m.DataMatricula,
+                    StatusPagamento = m.StatusPagamento ?? "Pendente",
+                    PagamentoAprovadoEm = m.PagamentoAprovadoEm
+                })
+                .ToListAsync();
+
+            return Ok(dados);
+        }
+
+        [HttpGet("pendentes")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<IEnumerable<MatriculaResponse>>> GetPendentes()
+        {
+            var dados = await _ctx.Matriculas
+                .AsNoTracking()
+                .Include(m => m.Aluno)!.ThenInclude(a => a.Usuario)
+                .Include(m => m.Turma)
+                .Where(m =>
+                    // ✅ robusto: trata null/vazio como pendente
+                    (m.StatusPagamento == "Pendente" || m.StatusPagamento == null || m.StatusPagamento == "")
+                    && m.PagamentoAprovadoEm == null
+                )
+                .OrderByDescending(m => m.DataMatricula)
+                .Select(m => new MatriculaResponse
+                {
+                    Id = m.Id,
+                    AlunoId = m.AlunoId,
+                    AlunoNome = m.Aluno != null && m.Aluno.Usuario != null ? m.Aluno.Usuario.Nome : "",
+                    TurmaId = m.TurmaId,
+                    TurmaNome = m.Turma != null ? m.Turma.Nome : "",
+                    TurmaCodigo = m.Turma != null ? m.Turma.Codigo : "",
+                    DataMatricula = m.DataMatricula,
+                    StatusPagamento = m.StatusPagamento ?? "Pendente",
+                    PagamentoAprovadoEm = m.PagamentoAprovadoEm
                 })
                 .ToListAsync();
 
@@ -95,6 +127,7 @@ namespace EduConnect.API.Controllers
         public async Task<ActionResult<MatriculaResponse>> GetById(int id)
         {
             var m = await _ctx.Matriculas
+                .AsNoTracking()
                 .Include(x => x.Aluno)!.ThenInclude(a => a.Usuario)
                 .Include(x => x.Turma)
                 .FirstOrDefaultAsync(x => x.Id == id);
@@ -106,11 +139,13 @@ namespace EduConnect.API.Controllers
             {
                 Id = m.Id,
                 AlunoId = m.AlunoId,
-                AlunoNome = m.Aluno!.Usuario!.Nome,
+                AlunoNome = m.Aluno != null && m.Aluno.Usuario != null ? m.Aluno.Usuario.Nome : "",
                 TurmaId = m.TurmaId,
-                TurmaNome = m.Turma!.Nome,
-                TurmaCodigo = m.Turma.Codigo,
-                DataMatricula = m.DataMatricula
+                TurmaNome = m.Turma != null ? m.Turma.Nome : "",
+                TurmaCodigo = m.Turma != null ? m.Turma.Codigo : "",
+                DataMatricula = m.DataMatricula,
+                StatusPagamento = m.StatusPagamento ?? "Pendente",
+                PagamentoAprovadoEm = m.PagamentoAprovadoEm
             };
 
             return Ok(resp);
@@ -128,32 +163,40 @@ namespace EduConnect.API.Controllers
             if (m == null)
                 return NotFound(new { message = "Matrícula não encontrada." });
 
+            if (m.Aluno == null || m.Aluno.Usuario == null)
+                return StatusCode(500, new { message = "Matrícula sem vínculo válido de Aluno/Usuário." });
+
             m.StatusPagamento = "Aprovado";
             m.PagamentoAprovadoEm = DateTime.UtcNow;
 
-            var aluno = m.Aluno!;
-            var usuario = aluno.Usuario!;
+            var aluno = m.Aluno;
+            var usuario = aluno.Usuario;
 
             bool acessoGeradoAgora = false;
             bool emailEnviado = false;
             string? warning = null;
 
-            // ✅ agora compila: Aluno tem EmailInstitucional
+            string? senhaTemporaria = null;
+
+            // se ainda não tem acesso, cria agora
             if (string.IsNullOrWhiteSpace(aluno.EmailInstitucional))
             {
                 var emailInstitucional = await GerarEmailInstitucionalUnicoAsync(usuario.Nome);
-                var senhaTemporaria = GerarSenhaTemporaria();
+                senhaTemporaria = GerarSenhaTemporaria();
 
                 usuario.Email = emailInstitucional;
-
-                // ✅ no seu projeto é SenhaHash, não PasswordHash
                 usuario.SenhaHash = BCrypt.Net.BCrypt.HashPassword(senhaTemporaria);
 
                 aluno.EmailInstitucional = emailInstitucional;
                 acessoGeradoAgora = true;
+            }
 
-                await _ctx.SaveChangesAsync();
+            // ✅ salva status do pagamento + eventuais credenciais
+            await _ctx.SaveChangesAsync();
 
+            // ✅ dispara Power Automate só se gerou senha agora
+            if (acessoGeradoAgora)
+            {
                 try
                 {
                     var payload = new
@@ -161,7 +204,7 @@ namespace EduConnect.API.Controllers
                         tipo = "Aluno",
                         nome = usuario.Nome,
                         emailContato = aluno.EmailContato,
-                        emailInstitucional = emailInstitucional,
+                        emailInstitucional = aluno.EmailInstitucional,
                         senhaTemporaria = senhaTemporaria
                     };
 
@@ -176,8 +219,6 @@ namespace EduConnect.API.Controllers
             }
             else
             {
-                await _ctx.SaveChangesAsync();
-                emailEnviado = false;
                 warning = "Pagamento aprovado. Acesso já existia (email institucional já definido).";
             }
 
@@ -198,8 +239,7 @@ namespace EduConnect.API.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> Delete(int id)
         {
-            var matricula = await _ctx.Matriculas
-                .FirstOrDefaultAsync(m => m.Id == id);
+            var matricula = await _ctx.Matriculas.FirstOrDefaultAsync(m => m.Id == id);
 
             if (matricula == null)
                 return NotFound(new { message = "Matrícula não encontrada." });
@@ -232,6 +272,7 @@ namespace EduConnect.API.Controllers
         {
             var normalized = input.Normalize(NormalizationForm.FormD);
             var sb = new StringBuilder();
+
             foreach (var c in normalized)
             {
                 var uc = CharUnicodeInfo.GetUnicodeCategory(c);

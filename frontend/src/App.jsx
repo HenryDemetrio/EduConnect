@@ -3,7 +3,6 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import RequireAuth from "./components/RequireAuth";
 import RequireRole from "./components/RequireRole.jsx";
 import AppLayout from "./layouts/AppLayout";
-
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 
@@ -58,8 +57,10 @@ export default function App() {
             <Route path="/admin/alunos/novo" element={<CadastroAluno />} />
             <Route path="/admin/alunos/:id/editar" element={<CadastroAluno />} />
 
+            {/* ✅ PROFESSORES no mesmo layout */}
             <Route path="/admin/professores" element={<ListaProfessores />} />
             <Route path="/admin/professores/novo" element={<CadastroProfessor />} />
+            <Route path="/admin/professores/:id/editar" element={<CadastroProfessor />} />
           </Route>
         </Route>
       </Route>
