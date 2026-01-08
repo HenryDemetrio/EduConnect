@@ -141,6 +141,7 @@ namespace EduConnect.API.Data
                 .HasOne(td => td.Professor)
                 .WithMany()
                 .HasForeignKey(td => td.ProfessorId)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // ===== AVALIACAO =====

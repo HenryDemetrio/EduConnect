@@ -94,7 +94,7 @@ namespace EduConnect.API.Controllers
                     DisciplinaId = td.DisciplinaId,
                     DisciplinaNome = td.Disciplina.Nome,
                     ProfessorId = td.ProfessorId,
-                    ProfessorNome = td.Professor.Usuario.Nome
+                    ProfessorNome = td.ProfessorId == null ? null : td.Professor.Usuario.Nome
                 })
                 .ToListAsync();
 
@@ -109,14 +109,23 @@ namespace EduConnect.API.Controllers
             var td = await _ctx.TurmaDisciplinas.FirstOrDefaultAsync(x => x.Id == id);
             if (td == null) return NotFound(new { message = "TurmaDisciplina não encontrada." });
 
-            var profExiste = await _ctx.Professores.AnyAsync(p => p.Id == req.ProfessorId);
+            // ✅ DESVINCULAR
+            if (req.ProfessorId == null)
+            {
+                td.ProfessorId = null;
+                await _ctx.SaveChangesAsync();
+                return NoContent();
+            }
+
+            var profExiste = await _ctx.Professores.AnyAsync(p => p.Id == req.ProfessorId.Value);
             if (!profExiste) return BadRequest(new { message = "ProfessorId inválido." });
 
-            td.ProfessorId = req.ProfessorId;
+            td.ProfessorId = req.ProfessorId.Value;
             await _ctx.SaveChangesAsync();
 
             return NoContent();
         }
+
 
         // DELETE /turmas/disciplinas/{id}
         [HttpDelete("disciplinas/{id:int}")]

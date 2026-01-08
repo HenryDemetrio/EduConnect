@@ -2,6 +2,6 @@
 {
     public class TrocarProfessorTurmaDisciplinaRequest
     {
-        public int ProfessorId { get; set; }
+        public int? ProfessorId { get; set; }
     }
 }
