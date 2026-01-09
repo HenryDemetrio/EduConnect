@@ -940,6 +940,113 @@ body[data-theme="dark"] .partners-bar img[alt="Logo Alura"] {
 
 
 
+/* =========================
+   AGENDA TOOLBAR (alinhamento fino)
+========================= */
+.btn-inline { width: auto !important; }
+
+.agenda-toolbar{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.agenda-toolbar__left{
+  display:flex;
+  align-items:flex-end;
+  gap:12px;
+  flex:1;
+  min-width:520px;
+}
+.agenda-toolbar__right{
+  display:flex;
+  align-items:flex-end;
+  gap:10px;
+}
+
+.agenda-month-nav{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.agenda-month-title{
+  font-weight:700;
+  min-width:180px;
+  text-align:center;
+}
+
+/* calendário */
+.agenda-calendar{ }
+.agenda-weekdays{
+  display:grid;
+  grid-template-columns:repeat(7, minmax(0, 1fr));
+  gap:8px;
+  margin-bottom:8px;
+}
+.agenda-weekday{
+  font-size:0.75rem;
+  color:var(--muted);
+  text-align:center;
+}
+.agenda-grid{
+  display:grid;
+  grid-template-columns:repeat(7, minmax(0, 1fr));
+  gap:8px;
+}
+.agenda-day{
+  border:1px solid var(--border);
+  background:rgba(148,163,184,0.08);
+  border-radius:12px;
+  padding:10px 0;
+  cursor:pointer;
+  position:relative;
+  color:var(--text);
+}
+body[data-theme="dark"] .agenda-day{ background:rgba(148,163,184,0.10); }
+.agenda-day.empty{ background:transparent; border:0; cursor:default; }
+.agenda-day.selected{ outline:2px solid rgba(215,23,47,0.55); }
+.agenda-day.has-events{ box-shadow: 0 10px 22px rgba(15,23,42,.08); }
+.agenda-dot{
+  position:absolute;
+  bottom:8px;
+  left:50%;
+  transform:translateX(-50%);
+  width:6px; height:6px;
+  border-radius:999px;
+  background: var(--brand);
+}
+
+/* modal básico */
+.modal-overlay{
+  position:fixed;
+  inset:0;
+  background:rgba(2,6,23,0.55);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+  z-index:9999;
+}
+.modal-card{
+  width:100%;
+  max-width:720px;
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:18px;
+  box-shadow: var(--shadow);
+  padding:18px;
+}
+.modal-header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+}
+.modal-title{
+  font-size:1.1rem;
+  font-weight:800;
+}
 
 
 

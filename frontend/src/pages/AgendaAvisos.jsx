@@ -1,806 +1,956 @@
-import { useEffect, useMemo, useState } from "react";
-import { useTheme } from "../context/ThemeContext";
-import { useAuth } from "../context/AuthContext";
+import React, { useEffect, useMemo, useState } from "react";
 import { apiJson } from "../services/api";
+import { useAuth } from "../context/AuthContext";
 
-const EVENT_TYPES = ["Aula", "Avaliação", "Reunião", "Aviso", "Entrega"];
-
-function lsKeyEvents(turmaId) {
-  return `educonnect.events.turma.${turmaId}`;
-}
-function lsKeyNotifs(turmaId) {
-  return `educonnect.notifs.turma.${turmaId}`;
+function pad2(n) {
+  return String(n).padStart(2, "0");
 }
 
-function safeJsonParse(str, fallback) {
-  try {
-    const v = JSON.parse(str);
-    return v ?? fallback;
-  } catch {
-    return fallback;
-  }
+function toDateKey(date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
-function readLocalList(key) {
-  return safeJsonParse(localStorage.getItem(key), []);
+function formatDateBRFromKey(key) {
+  // key = yyyy-mm-dd
+  if (!key || typeof key !== "string") return "";
+  const [y, m, d] = key.split("-");
+  if (!y || !m || !d) return key;
+  return `${d}/${m}/${y}`;
 }
 
-function writeLocalList(key, list) {
-  localStorage.setItem(key, JSON.stringify(list));
+function formatDateTimeBR(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "America/Sao_Paulo",
+  });
 }
 
-function ymd(date) {
-  // retorna YYYY-MM-DD no timezone local
-  const d = new Date(date);
+function isoToLocalInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
   const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+  const mm = pad2(d.getMonth() + 1);
+  const dd = pad2(d.getDate());
+  const hh = pad2(d.getHours());
+  const mi = pad2(d.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
-function formatPt(dateStrOrIso) {
-  if (!dateStrOrIso) return "";
-  const d = new Date(dateStrOrIso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+function localInputToUtcIso(localInput) {
+  const d = new Date(localInput); // local "YYYY-MM-DDTHH:mm"
+  return d.toISOString();
 }
 
-function startOfMonth(date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-function endOfMonth(date) {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
-}
-function addMonths(date, delta) {
-  return new Date(date.getFullYear(), date.getMonth() + delta, 1);
-}
-function weekdayIndex(date) {
-  // 0=Dom..6=Sáb
-  return date.getDay();
-}
-
-function uid() {
-  return Math.random().toString(16).slice(2) + Date.now().toString(16);
-}
-
-function inputBaseStyle(theme) {
-  return {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid rgba(148,163,184,0.25)",
-    background: theme === "dark" ? "rgba(2,6,23,0.4)" : "#fff",
-    color: theme === "dark" ? "#f8fafc" : "#111827",
-    outline: "none",
-  };
-}
+const MONTHS_PT = [
+  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+];
 
 export default function AgendaAvisos() {
-  const { theme } = useTheme();
   const { me } = useAuth();
 
-  const role = me?.role || "Aluno";
-  const canManage = role === "Admin" || role === "Professor";
+  const isAdmin = me?.role === "Admin";
+  const isProfessor = me?.role === "Professor";
 
-  // seleção de turma
-  const [loadingTurmas, setLoadingTurmas] = useState(true);
+  // Turmas (para calendário / filtro de eventos)
   const [turmas, setTurmas] = useState([]);
-  const [selectedTurmaId, setSelectedTurmaId] = useState("");
+  const [turmaId, setTurmaId] = useState("");
+  const [loadingTurmas, setLoadingTurmas] = useState(false);
+
+  // Turma separada só para Notificações (evita conflito com "all/global")
+  const [notifTurmaId, setNotifTurmaId] = useState("");
+
+  const [eventos, setEventos] = useState([]);
+  const [loadingEventos, setLoadingEventos] = useState(false);
+  const [erroEventos, setErroEventos] = useState("");
+
+  const [notifs, setNotifs] = useState([]);
+  const [loadingNotifs, setLoadingNotifs] = useState(false);
+  const [erroNotifs, setErroNotifs] = useState("");
 
   // calendário
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDay, setSelectedDay] = useState(ymd(new Date()));
+  const [cursorMonth, setCursorMonth] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
+  const [selectedDayKey, setSelectedDayKey] = useState(() => toDateKey(new Date()));
 
-  // dados
-  const [events, setEvents] = useState([]);
-  const [notifs, setNotifs] = useState([]);
+  // modal evento
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [savingEvento, setSavingEvento] = useState(false);
+  const [deletingEvento, setDeletingEvento] = useState(false);
 
-  // ui
-  const [toast, setToast] = useState(null); // {type,text}
-  const [modalEventOpen, setModalEventOpen] = useState(false);
-  const [editingEvent, setEditingEvent] = useState(null);
+  const [eventoGeral, setEventoGeral] = useState(false);
+  const [eventoTitulo, setEventoTitulo] = useState("");
+  const [eventoDescricao, setEventoDescricao] = useState("");
+  const [eventoInicio, setEventoInicio] = useState(() => {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = pad2(now.getMonth() + 1);
+    const dd = pad2(now.getDate());
+    return `${yyyy}-${mm}-${dd}T09:00`;
+  });
+  const [eventoFim, setEventoFim] = useState("");
+  const [eventoEditando, setEventoEditando] = useState(null);
+  const [erroSalvarEvento, setErroSalvarEvento] = useState("");
 
-  const [eventTitle, setEventTitle] = useState("");
-  const [eventType, setEventType] = useState(EVENT_TYPES[0]);
-  const [eventStart, setEventStart] = useState("");
-  const [eventEnd, setEventEnd] = useState("");
+  // notificações
+  const [notifTarget, setNotifTarget] = useState("geral"); // geral | turma | aluno
+  const [notifTitulo, setNotifTitulo] = useState("");
+  const [notifMensagem, setNotifMensagem] = useState("");
+  const [savingNotif, setSavingNotif] = useState(false);
 
-  const [notifTitle, setNotifTitle] = useState("");
-  const [notifMsg, setNotifMsg] = useState("");
+  const [alunosTurma, setAlunosTurma] = useState([]);
+  const [alunoId, setAlunoId] = useState("");
+  const [loadingAlunosTurma, setLoadingAlunosTurma] = useState(false);
 
-  function showToast(type, text) {
-    setToast({ type, text });
-    setTimeout(() => setToast(null), 2600);
+  // ====== LOADERS ======
+
+  async function carregarTurmas() {
+    setLoadingTurmas(true);
+    try {
+      const url = isAdmin ? "/turmas" : (isProfessor ? "/turmas/minhas" : "/turmas");
+      const data = await apiJson(url);
+      const arr = Array.isArray(data) ? data : [];
+      setTurmas(arr);
+
+      // turma do calendário
+      if (isAdmin) {
+        setTurmaId((prev) => prev || "all");
+      } else if (isProfessor) {
+        const first = arr[0]?.id ? String(arr[0].id) : "";
+        setTurmaId((prev) => prev || first);
+      }
+
+      // turma default do form de notificações (sempre real)
+      const firstReal = arr[0]?.id ? String(arr[0].id) : "";
+      setNotifTurmaId((prev) => prev || firstReal);
+    } catch (e) {
+      console.error(e);
+      setTurmas([]);
+      if (isAdmin) setTurmaId("all");
+    } finally {
+      setLoadingTurmas(false);
+    }
   }
 
-  // ---------------- Turmas por role ----------------
-  useEffect(() => {
-    let alive = true;
+  async function carregarEventos() {
+    setErroEventos("");
+    setLoadingEventos(true);
+    try {
+      let data = [];
 
-    async function loadTurmas() {
-      setLoadingTurmas(true);
-      try {
-        let list = [];
-
-        if (role === "Professor") {
-          // /professores/me/turmas => vem TurmaDisciplina, então dedup por turmaId
-          const td = await apiJson("/professores/me/turmas");
-          const arr = Array.isArray(td) ? td : [];
-          const map = new Map();
-          for (const x of arr) {
-            if (!map.has(x.turmaId)) {
-              map.set(x.turmaId, {
-                turmaId: x.turmaId,
-                turmaNome: x.turmaNome,
-                turmaCodigo: x.turmaCodigo,
-              });
-            }
-          }
-          list = Array.from(map.values());
-        } else if (role === "Admin") {
-          const t = await apiJson("/turmas");
-          const arr = Array.isArray(t) ? t : [];
-          list = arr.map((x) => ({
-            turmaId: x.id ?? x.turmaId ?? x.turmaID ?? x.turma_id,
-            turmaNome: x.nome ?? x.turmaNome ?? x.codigo ?? "Turma",
-            turmaCodigo: x.codigo ?? x.turmaCodigo ?? x.nome ?? "",
-          }));
-        } else {
-          // aluno: tenta ser “limpo”, se não houver endpoint, deixa sem seleção
-          // (sem quebrar apresentação)
-          list = [];
-        }
-
-        if (!alive) return;
-        setTurmas(list);
-
-        if (list.length > 0) {
-          setSelectedTurmaId(String(list[0].turmaId));
-        } else {
-          setSelectedTurmaId("");
-        }
-      } catch {
-        if (!alive) return;
-        setTurmas([]);
-        setSelectedTurmaId("");
-      } finally {
-        if (!alive) return;
-        setLoadingTurmas(false);
+      if (isAdmin && turmaId === "all") {
+        data = await apiJson("/eventos");
+      } else if (isAdmin && turmaId === "global") {
+        const all = await apiJson("/eventos");
+        data = (all || []).filter((x) => x.turmaId == null);
+      } else {
+        const tid = turmaId && turmaId !== "all" && turmaId !== "global" ? Number(turmaId) : null;
+        data = tid ? await apiJson(`/eventos?turmaId=${tid}`) : await apiJson("/eventos");
       }
-    }
 
-    loadTurmas();
-    return () => {
-      alive = false;
+      setEventos(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error(e);
+      setErroEventos("Não foi possível carregar eventos.");
+      setEventos([]);
+    } finally {
+      setLoadingEventos(false);
+    }
+  }
+
+  async function carregarNotificacoesMine() {
+    setErroNotifs("");
+    setLoadingNotifs(true);
+    try {
+      const data = await apiJson("/notificacoes/me");
+      const arr = Array.isArray(data) ? data : [];
+      arr.sort((a, b) => new Date(b.criadoEmUtc || b.CriadoEmUtc || 0) - new Date(a.criadoEmUtc || a.CriadoEmUtc || 0));
+      setNotifs(arr);
+    } catch (e) {
+      console.error(e);
+      setErroNotifs("Não foi possível carregar notificações.");
+      setNotifs([]);
+    } finally {
+      setLoadingNotifs(false);
+    }
+  }
+
+  function normalizeAluno(a) {
+    return {
+      alunoId: a?.alunoId ?? a?.AlunoId ?? a?.id ?? a?.Id,
+      nome: a?.nome ?? a?.Nome,
+      ra: a?.ra ?? a?.RA,
+      email: a?.email ?? a?.Email,
     };
-  }, [role]);
+  }
 
-  const selectedTurma = useMemo(() => {
-    return turmas.find((t) => String(t.turmaId) === String(selectedTurmaId)) || null;
-  }, [turmas, selectedTurmaId]);
+  async function carregarAlunosDaTurma(tid) {
+    if (!tid) {
+      setAlunosTurma([]);
+      setAlunoId("");
+      return;
+    }
 
-  // ---------------- Load eventos/notifs (API -> fallback localStorage) ----------------
+    setLoadingAlunosTurma(true);
+    try {
+      const data = await apiJson(`/turmas/${Number(tid)}/alunos`);
+      const arr = Array.isArray(data) ? data : [];
+      const norm = arr.map(normalizeAluno).filter(x => x.alunoId != null);
+
+      norm.sort((a, b) => (a.nome || "").localeCompare(b.nome || ""));
+
+      setAlunosTurma(norm);
+      setAlunoId(norm[0]?.alunoId != null ? String(norm[0].alunoId) : "");
+    } catch (e) {
+      console.error(e);
+      setAlunosTurma([]);
+      setAlunoId("");
+    } finally {
+      setLoadingAlunosTurma(false);
+    }
+  }
+
+  // ====== EFFECTS ======
+
   useEffect(() => {
-    let alive = true;
+    carregarTurmas();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    async function loadData() {
-      if (!selectedTurmaId) {
-        setEvents([]);
-        setNotifs([]);
-        return;
-      }
+  useEffect(() => {
+    if (!turmaId) return;
+    carregarEventos();
+    carregarNotificacoesMine();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turmaId]);
 
-      // EVENTS
-      try {
-        // Se existir no backend um dia: GET /eventos?turmaId=...
-        const apiEvents = await apiJson(`/eventos?turmaId=${selectedTurmaId}`);
-        if (!alive) return;
-        const list = Array.isArray(apiEvents) ? apiEvents : [];
-        setEvents(list);
-      } catch {
-        if (!alive) return;
-        const local = readLocalList(lsKeyEvents(selectedTurmaId));
-        setEvents(local);
-      }
+  useEffect(() => {
+    if (notifTarget !== "aluno") return;
+    if (!notifTurmaId) return;
+    carregarAlunosDaTurma(notifTurmaId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifTarget, notifTurmaId]);
 
-      // NOTIFS
-      try {
-        // Se existir no backend um dia: GET /notificacoes?turmaId=...
-        const apiNotifs = await apiJson(`/notificacoes?turmaId=${selectedTurmaId}`);
-        if (!alive) return;
-        const list = Array.isArray(apiNotifs) ? apiNotifs : [];
-        setNotifs(list);
-      } catch {
-        if (!alive) return;
-        const local = readLocalList(lsKeyNotifs(selectedTurmaId));
-        setNotifs(local);
-      }
+  const turmasOptionsCalendar = useMemo(() => {
+    const base = (turmas || []).map((t) => ({
+      value: String(t.id),
+      label: `${t.nome} (${t.codigo})`,
+    }));
+
+    if (isAdmin) {
+      return [
+        { value: "all", label: "Todas" },
+        { value: "global", label: "Somente eventos gerais" },
+        ...base
+      ];
     }
+    return base;
+  }, [turmas, isAdmin]);
 
-    loadData();
-    return () => {
-      alive = false;
-    };
-  }, [selectedTurmaId]);
+  const turmasOptionsReal = useMemo(() => {
+    return (turmas || []).map((t) => ({
+      value: String(t.id),
+      label: `${t.nome} (${t.codigo})`,
+    }));
+  }, [turmas]);
 
-  // ---------------- Calendário ----------------
-  const monthStart = useMemo(() => startOfMonth(currentDate), [currentDate]);
-  const monthEnd = useMemo(() => endOfMonth(currentDate), [currentDate]);
-
-  const daysGrid = useMemo(() => {
-    const days = [];
-    const startWeekday = weekdayIndex(monthStart); // 0..6
-    for (let i = 0; i < startWeekday; i++) days.push(null);
-
-    const totalDays = monthEnd.getDate();
-    for (let d = 1; d <= totalDays; d++) {
-      days.push(new Date(currentDate.getFullYear(), currentDate.getMonth(), d));
-    }
-
-    // completa a última linha
-    while (days.length % 7 !== 0) days.push(null);
-    return days;
-  }, [monthStart, monthEnd, currentDate]);
-
-  const eventsByDay = useMemo(() => {
+  const eventosByDay = useMemo(() => {
     const map = new Map();
-    for (const ev of events) {
-      const key = ymd(ev.startAt ?? ev.inicioUtc ?? ev.date ?? ev.data ?? ev.start);
-      if (!key) continue;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(ev);
+    for (const ev of eventos) {
+      const d = new Date(ev.inicioUtc);
+      const k = toDateKey(d);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(ev);
+    }
+    for (const [k, arr] of map.entries()) {
+      arr.sort((a, b) => new Date(a.inicioUtc) - new Date(b.inicioUtc));
+      map.set(k, arr);
     }
     return map;
-  }, [events]);
+  }, [eventos]);
 
-  const selectedDayEvents = useMemo(() => {
-    return eventsByDay.get(selectedDay) || [];
-  }, [eventsByDay, selectedDay]);
+  const selectedDayEventos = useMemo(() => {
+    return eventosByDay.get(selectedDayKey) || [];
+  }, [eventosByDay, selectedDayKey]);
 
-  // ---------------- Ações Eventos ----------------
-  function openCreateEvent() {
-    setEditingEvent(null);
-    setEventTitle("");
-    setEventType(EVENT_TYPES[0]);
-    setEventStart("");
-    setEventEnd("");
-    setModalEventOpen(true);
+  // ====== EVENTO MODAL ======
+
+  function openNovoEvento() {
+    setEventoEditando(null);
+    setErroSalvarEvento("");
+    setEventoGeral(false);
+    setEventoTitulo("");
+    setEventoDescricao("");
+
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = pad2(today.getMonth() + 1);
+    const dd = pad2(today.getDate());
+    setEventoInicio(`${yyyy}-${mm}-${dd}T09:00`);
+    setEventoFim("");
+    setShowEventModal(true);
   }
 
-  function openEditEvent(ev) {
-    setEditingEvent(ev);
-    setEventTitle(ev.title ?? ev.titulo ?? "");
-    setEventType(ev.type ?? ev.tipo ?? EVENT_TYPES[0]);
-    setEventStart((ev.startAt ?? ev.inicioUtc ?? "").slice(0, 16));
-    setEventEnd((ev.endAt ?? ev.fimUtc ?? "").slice(0, 16));
-    setModalEventOpen(true);
+  function openEditarEvento(ev) {
+    setEventoEditando(ev);
+    setErroSalvarEvento("");
+    setEventoGeral(ev.turmaId == null);
+    setEventoTitulo(ev.titulo || "");
+    setEventoDescricao(ev.descricao || "");
+    setEventoInicio(isoToLocalInput(ev.inicioUtc));
+    setEventoFim(isoToLocalInput(ev.fimUtc));
+    setShowEventModal(true);
   }
 
-  function closeEventModal() {
-    setModalEventOpen(false);
-    setEditingEvent(null);
-  }
+  async function salvarEvento(e) {
+    e?.preventDefault?.();
+    setErroSalvarEvento("");
 
-  async function saveEvent() {
-    if (!selectedTurmaId) return;
+    if (!eventoTitulo.trim()) return setErroSalvarEvento("Título é obrigatório.");
+    if (!eventoInicio) return setErroSalvarEvento("Início é obrigatório.");
 
-    const title = eventTitle.trim();
-    if (!title) return showToast("error", "Título do evento é obrigatório.");
-
-    if (!eventStart || !eventEnd) return showToast("error", "Informe início e fim do evento.");
-
-    const start = new Date(eventStart);
-    const end = new Date(eventEnd);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      return showToast("error", "Datas inválidas.");
-    }
-    if (end < start) return showToast("error", "Fim não pode ser antes do início.");
+    const tid = (!eventoGeral && turmaId && turmaId !== "all" && turmaId !== "global") ? Number(turmaId) : null;
+    if (!eventoGeral && !tid) return setErroSalvarEvento("Selecione uma turma (ou marque como evento geral).");
 
     const payload = {
-      id: editingEvent?.id ?? editingEvent?.eventId ?? editingEvent?.eventoId ?? uid(),
-      turmaId: Number(selectedTurmaId),
-      title,
-      type: eventType,
-      startAt: start.toISOString(),
-      endAt: end.toISOString(),
-      createdBy: me?.nome ?? "Sistema",
-      createdByRole: role,
+      titulo: eventoTitulo.trim(),
+      descricao: (eventoDescricao || "").trim() || null,
+      inicioUtc: localInputToUtcIso(eventoInicio),
+      fimUtc: eventoFim ? localInputToUtcIso(eventoFim) : null,
+      turmaId: eventoGeral ? null : tid
     };
 
-    // tenta API primeiro; se falhar, salva local
+    setSavingEvento(true);
     try {
-      if (editingEvent) {
-        await apiJson(`/eventos/${payload.id}`, "PUT", payload);
-      } else {
-        await apiJson(`/eventos`, "POST", payload);
+      const created = await apiJson("/eventos", { method: "POST", body: payload });
+
+      if (eventoEditando?.id) {
+        try {
+          await apiJson(`/eventos/${eventoEditando.id}`, { method: "DELETE" });
+        } catch {}
       }
-      showToast("success", "Evento salvo.");
-      // reload via API
-      const apiEvents = await apiJson(`/eventos?turmaId=${selectedTurmaId}`);
-      setEvents(Array.isArray(apiEvents) ? apiEvents : []);
-    } catch {
-      const next = (() => {
-        const cur = Array.isArray(events) ? [...events] : [];
-        const idx = cur.findIndex((x) => String(x.id ?? x.eventId) === String(payload.id));
-        if (idx >= 0) cur[idx] = payload;
-        else cur.push(payload);
-        return cur;
-      })();
 
-      setEvents(next);
-      writeLocalList(lsKeyEvents(selectedTurmaId), next);
-      showToast("success", "Evento salvo (demo/local).");
+      setShowEventModal(false);
+      setEventoEditando(null);
+      await carregarEventos();
+
+      const dayKey = toDateKey(new Date(created?.inicioUtc || payload.inicioUtc));
+      setSelectedDayKey(dayKey);
+    } catch (err) {
+      console.error(err);
+      setErroSalvarEvento("Erro ao salvar evento. Verifique e tente novamente.");
+    } finally {
+      setSavingEvento(false);
     }
-
-    // seleciona dia do evento automaticamente
-    setSelectedDay(ymd(start));
-    closeEventModal();
   }
 
-  async function deleteEvent(ev) {
-    if (!selectedTurmaId) return;
-    const id = ev.id ?? ev.eventId ?? ev.eventoId;
+  async function excluirEvento(evId) {
+    if (!evId) return;
+    if (!confirm("Excluir este evento?")) return;
+
+    setDeletingEvento(true);
+    try {
+      await apiJson(`/eventos/${evId}`, { method: "DELETE" });
+      await carregarEventos();
+    } catch (e) {
+      console.error(e);
+      alert("Não foi possível excluir o evento.");
+    } finally {
+      setDeletingEvento(false);
+    }
+  }
+
+  // ====== NOTIFICAÇÕES ======
+
+  function normalizeApiError(err) {
+    const status = err?.status;
+    const payload = err?.payload;
+
+    const payloadMsg =
+      (typeof payload === "string" && payload) ||
+      payload?.message ||
+      payload?.title ||
+      payload?.error ||
+      null;
+
+    if (status && payloadMsg) return `(${status}) ${payloadMsg}`;
+    if (status) return `(${status}) Erro na API`;
+    return "Erro na API";
+  }
+
+  async function publicarNotificacao(e) {
+    e?.preventDefault?.();
+    setErroNotifs("");
+
+    if (!notifTitulo.trim()) return setErroNotifs("Título é obrigatório.");
+    if (!notifMensagem.trim()) return setErroNotifs("Mensagem é obrigatória.");
+
+    // geral
+    if (notifTarget === "geral") {
+      setSavingNotif(true);
+      try {
+        await apiJson("/notificacoes", {
+          method: "POST",
+          body: { titulo: notifTitulo.trim(), mensagem: notifMensagem.trim(), usuarioId: null }
+        });
+        setNotifTitulo("");
+        setNotifMensagem("");
+        await carregarNotificacoesMine();
+      } catch (e2) {
+        console.error(e2);
+        setErroNotifs(`Erro ao publicar notificação ${normalizeApiError(e2)}`);
+      } finally {
+        setSavingNotif(false);
+      }
+      return;
+    }
+
+    // turma
+    if (notifTarget === "turma") {
+      const tid = notifTurmaId ? Number(notifTurmaId) : null;
+      if (!tid) return setErroNotifs("Selecione uma turma.");
+
+      setSavingNotif(true);
+      try {
+        await apiJson(`/notificacoes/turma/${tid}`, {
+          method: "POST",
+          body: { titulo: notifTitulo.trim(), mensagem: notifMensagem.trim() }
+        });
+        setNotifTitulo("");
+        setNotifMensagem("");
+        alert("Notificação enviada para a turma.");
+      } catch (e2) {
+        console.error(e2);
+        setErroNotifs(`Erro ao enviar notificação para a turma ${normalizeApiError(e2)}`);
+      } finally {
+        setSavingNotif(false);
+      }
+      return;
+    }
+
+    // aluno específico
+    if (notifTarget === "aluno") {
+      const aid = alunoId ? Number(alunoId) : null;
+      if (!aid || Number.isNaN(aid)) return setErroNotifs("Selecione um aluno.");
+
+      setSavingNotif(true);
+      try {
+        await apiJson(`/notificacoes/aluno/${aid}`, {
+          method: "POST",
+          body: { titulo: notifTitulo.trim(), mensagem: notifMensagem.trim() }
+        });
+        setNotifTitulo("");
+        setNotifMensagem("");
+        alert("Notificação enviada para o aluno.");
+      } catch (e2) {
+        console.error(e2);
+        setErroNotifs(`Erro ao enviar notificação para o aluno ${normalizeApiError(e2)}`);
+      } finally {
+        setSavingNotif(false);
+      }
+    }
+  }
+
+  async function excluirNotificacao(id) {
     if (!id) return;
+    if (!confirm("Excluir esta notificação (do seu feed)?")) return;
 
     try {
-      await apiJson(`/eventos/${id}`, "DELETE");
-      showToast("success", "Evento removido.");
-      const apiEvents = await apiJson(`/eventos?turmaId=${selectedTurmaId}`);
-      setEvents(Array.isArray(apiEvents) ? apiEvents : []);
-    } catch {
-      const next = events.filter((x) => String(x.id ?? x.eventId) !== String(id));
-      setEvents(next);
-      writeLocalList(lsKeyEvents(selectedTurmaId), next);
-      showToast("success", "Evento removido (demo/local).");
+      await apiJson(`/notificacoes/${id}`, { method: "DELETE" });
+      await carregarNotificacoesMine();
+    } catch (e) {
+      console.error(e);
+      alert("Não foi possível excluir.");
     }
   }
 
-  // ---------------- Ações Notificações ----------------
-  async function publishNotif() {
-    if (!selectedTurmaId) return;
-    const title = notifTitle.trim();
-    const msg = notifMsg.trim();
+  // ====== CALENDÁRIO ======
 
-    if (!title || !msg) return showToast("error", "Título e mensagem são obrigatórios.");
+  const calendarDays = useMemo(() => {
+    const year = cursorMonth.getFullYear();
+    const month = cursorMonth.getMonth();
+    const first = new Date(year, month, 1);
+    const last = new Date(year, month + 1, 0);
+    const startDow = first.getDay();
+    const daysInMonth = last.getDate();
 
-    const payload = {
-      id: uid(),
-      turmaId: Number(selectedTurmaId),
-      title,
-      message: msg,
-      createdAt: new Date().toISOString(),
-      createdBy: me?.nome ?? "Sistema",
-      createdByRole: role,
-      priority: "normal",
-    };
+    const days = [];
+    for (let i = 0; i < startDow; i++) days.push(null);
+    for (let d = 1; d <= daysInMonth; d++) days.push(new Date(year, month, d));
+    return days;
+  }, [cursorMonth]);
 
-    try {
-      await apiJson(`/notificacoes`, "POST", payload);
-      showToast("success", "Aviso publicado.");
-      const apiNotifs = await apiJson(`/notificacoes?turmaId=${selectedTurmaId}`);
-      setNotifs(Array.isArray(apiNotifs) ? apiNotifs : []);
-    } catch {
-      const next = [payload, ...(Array.isArray(notifs) ? notifs : [])];
-      setNotifs(next);
-      writeLocalList(lsKeyNotifs(selectedTurmaId), next);
-      showToast("success", "Aviso publicado (demo/local).");
-    }
+  const monthLabel = `${MONTHS_PT[cursorMonth.getMonth()]} de ${cursorMonth.getFullYear()}`;
 
-    setNotifTitle("");
-    setNotifMsg("");
-  }
+  // ====== UI ======
 
-  async function deleteNotif(n) {
-    if (!selectedTurmaId) return;
-    const id = n.id ?? n.notificacaoId;
-    if (!id) return;
+  const pageWrap = {
+    maxWidth: 1180,
+    margin: "0 auto",
+    padding: "10px 0 18px",
+    textAlign: "left",
+  };
 
-    try {
-      await apiJson(`/notificacoes/${id}`, "DELETE");
-      showToast("success", "Aviso removido.");
-      const apiNotifs = await apiJson(`/notificacoes?turmaId=${selectedTurmaId}`);
-      setNotifs(Array.isArray(apiNotifs) ? apiNotifs : []);
-    } catch {
-      const next = notifs.filter((x) => String(x.id ?? x.notificacaoId) !== String(id));
-      setNotifs(next);
-      writeLocalList(lsKeyNotifs(selectedTurmaId), next);
-      showToast("success", "Aviso removido (demo/local).");
-    }
-  }
-
-  const monthLabel = useMemo(() => {
-    return currentDate.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
-  }, [currentDate]);
+  const grid = {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 380px",
+    gap: 14,
+    alignItems: "start",
+  };
 
   return (
-    <div className="dashboard-shell">
-      {/* TOAST */}
-      {toast && (
-        <div
-          style={{
-            position: "fixed",
-            top: 18,
-            right: 18,
-            zIndex: 9999,
-            padding: "10px 12px",
-            borderRadius: 12,
-            border: "1px solid rgba(148,163,184,0.25)",
-            background: toast.type === "success" ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
-            color: theme === "dark" ? "#f8fafc" : "#111827",
-            backdropFilter: "blur(10px)",
-            maxWidth: 360,
-          }}
-        >
-          <strong style={{ display: "block", marginBottom: 2 }}>
-            {toast.type === "success" ? "OK" : "Atenção"}
-          </strong>
-          <span style={{ opacity: 0.9 }}>{toast.text}</span>
-        </div>
-      )}
+    <div style={pageWrap}>
+      {/* Header padrão do projeto */}
+      <div style={{ marginBottom: 14 }}>
+        <h1 className="dashboard-title" style={{ marginBottom: 6 }}>
+          Agenda & Avisos
+        </h1>
+        <p className="dashboard-subtitle">
+          Eventos e comunicações em um só lugar.
+        </p>
+      </div>
 
-      <main className="dashboard-main">
-        <div style={{ marginBottom: 14 }}>
-          <h1 className="dashboard-title" style={{ marginBottom: 6 }}>
-            Agenda & Avisos
-          </h1>
-          <p className="dashboard-subtitle">
-            Uma central única para eventos e comunicados — sem páginas demais, sem confusão.
-          </p>
-        </div>
-
-        <section className="panel teacher-grid">
-          {/* COLUNA PRINCIPAL */}
-          <div className="teacher-main-column">
-            <div className="teacher-card">
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                <div>
-                  <h2 className="panel-title" style={{ marginBottom: 4 }}>
-                    Calendário da turma
-                  </h2>
-                  <p className="panel-subtitle">
-                    {selectedTurma
-                      ? `${selectedTurma.turmaNome}${selectedTurma.turmaCodigo ? ` (${selectedTurma.turmaCodigo})` : ""}`
-                      : role === "Aluno"
-                      ? "Calendário da sua turma"
-                      : "Selecione uma turma para visualizar e organizar eventos"}
-                  </p>
+      <div style={grid}>
+        {/* COLUNA ESQUERDA */}
+        <div>
+          <div className="teacher-card">
+            <div className="agenda-toolbar" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div className="form-field" style={{ minWidth: 280 }}>
+                  <label>Turma</label>
+                  <select
+                    value={turmaId}
+                    onChange={(e) => setTurmaId(e.target.value)}
+                    disabled={loadingTurmas}
+                  >
+                    {turmasOptionsCalendar.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
                 </div>
 
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  {/* seletor de turma (Admin/Professor) */}
-                  {(role === "Admin" || role === "Professor") && (
-                    <div style={{ minWidth: 260 }}>
-                      <label className="teacher-label">Turma</label>
-                      <select
-                        className="disciplina-select"
-                        value={selectedTurmaId}
-                        onChange={(e) => setSelectedTurmaId(e.target.value)}
-                        disabled={loadingTurmas || turmas.length === 0}
-                        style={{ marginTop: 6 }}
-                      >
-                        {turmas.length === 0 ? (
-                          <option value="">
-                            {loadingTurmas ? "Carregando..." : "Sem turmas disponíveis"}
-                          </option>
-                        ) : (
-                          turmas.map((t) => (
-                            <option key={t.turmaId} value={t.turmaId}>
-                              {t.turmaNome} {t.turmaCodigo ? `(${t.turmaCodigo})` : ""}
-                            </option>
-                          ))
-                        )}
-                      </select>
-                    </div>
-                  )}
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button
+                    className="btn-secondary btn-small btn-inline"
+                    onClick={() => setCursorMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
+                    type="button"
+                    title="Mês anterior"
+                  >
+                    ←
+                  </button>
 
-                  {canManage && (
-                    <button type="button" className="btn-primary" onClick={openCreateEvent} disabled={!selectedTurmaId}>
-                      + Novo evento
-                    </button>
-                  )}
+                  <div style={{ fontWeight: 600 }}>{monthLabel}</div>
+
+                  <button
+                    className="btn-secondary btn-small btn-inline"
+                    onClick={() => setCursorMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
+                    type="button"
+                    title="Próximo mês"
+                  >
+                    →
+                  </button>
                 </div>
               </div>
 
-              {/* Month row */}
-              <div className="calendar-month-row" style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button
+                  className="btn-primary btn-inline"
                   type="button"
-                  className="btn-secondary"
-                  onClick={() => setCurrentDate((d) => addMonths(d, -1))}
+                  onClick={openNovoEvento}
+                  disabled={savingEvento || deletingEvento}
                 >
-                  ←
+                  + Novo evento
                 </button>
 
-                <div className="calendar-month" style={{ fontWeight: 700, textTransform: "capitalize" }}>
-                  {monthLabel}
-                </div>
-
                 <button
+                  className="btn-secondary btn-small btn-inline"
                   type="button"
-                  className="btn-secondary"
-                  onClick={() => setCurrentDate((d) => addMonths(d, 1))}
+                  onClick={carregarEventos}
+                  disabled={loadingEventos}
                 >
-                  →
+                  Atualizar
                 </button>
-              </div>
-
-              {/* Calendar */}
-              <div className="calendar-wrapper">
-                <div className="calendar-grid" style={{ marginTop: 10 }}>
-                  {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((w) => (
-                    <div key={w} className="calendar-weekday">
-                      {w}
-                    </div>
-                  ))}
-
-                  {daysGrid.map((d, idx) => {
-                    if (!d) {
-                      return <div key={`e-${idx}`} className="calendar-day empty" />;
-                    }
-                    const key = ymd(d);
-                    const has = (eventsByDay.get(key) || []).length > 0;
-                    const isSelected = key === selectedDay;
-
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        className={`calendar-day ${has ? "has-event" : ""}`}
-                        onClick={() => setSelectedDay(key)}
-                        style={{
-                          cursor: "pointer",
-                          outline: isSelected ? "2px solid rgba(2,132,199,0.75)" : "none",
-                        }}
-                      >
-                        {d.getDate()}
-                      </button>
-                    );
-                  })}
-                </div>
               </div>
             </div>
 
-            {/* Eventos do dia */}
-            <div className="teacher-card">
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            {erroEventos ? <div className="form-error" style={{ marginTop: 10 }}>{erroEventos}</div> : null}
+
+            {/* CALENDÁRIO */}
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8 }}>
+                {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((w) => (
+                  <div key={w} style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700 }}>
+                    {w}
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginTop: 8 }}>
+                {calendarDays.map((d, idx) => {
+                  if (!d) return <div key={`empty-${idx}`} style={{ height: 44 }} />;
+
+                  const k = toDateKey(d);
+                  const dayEvents = eventosByDay.get(k) || [];
+                  const count = dayEvents.length;
+                  const isSelected = selectedDayKey === k;
+
+                  return (
+                    <button
+                      type="button"
+                      key={k}
+                      onClick={() => setSelectedDayKey(k)}
+                      style={{
+                        height: 44,
+                        borderRadius: 12,
+                        border: isSelected ? "1px solid rgba(59,130,246,.35)" : "1px solid var(--border)",
+                        background: isSelected ? "rgba(59,130,246,.10)" : "var(--card)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "0 10px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span style={{ fontWeight: 700 }}>{d.getDate()}</span>
+
+                      {count > 0 ? (
+                        <span
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: 999,
+                            border: "1px solid var(--border)",
+                            color: "var(--muted)",
+                            background: "rgba(0,0,0,0.02)",
+                          }}
+                          title={`${count} evento(s)`}
+                        >
+                          {count}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* EVENTOS DO DIA */}
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
                 <div>
-                  <h3 className="panel-title" style={{ marginBottom: 4 }}>
-                    Eventos do dia
-                  </h3>
-                  <p className="panel-subtitle">
-                    {selectedDay ? `Selecionado: ${selectedDay.split("-").reverse().join("/")}` : "Selecione um dia"}
-                  </p>
+                  <h3 style={{ margin: 0, fontWeight: 700 }}>Eventos do dia</h3>
+                  <div className="panel-subtitle" style={{ marginTop: 4 }}>
+                    Selecionado: {formatDateBRFromKey(selectedDayKey)}
+                  </div>
                 </div>
               </div>
 
-              {selectedDayEvents.length === 0 ? (
-                <div style={{ opacity: 0.8, marginTop: 8 }}>
-                  Sem eventos para este dia.
-                </div>
+              {loadingEventos ? (
+                <div style={{ marginTop: 10 }}>Carregando...</div>
               ) : (
-                <ul className="calendar-events" style={{ marginTop: 10 }}>
-                  {selectedDayEvents.map((ev) => {
-                    const id = ev.id ?? ev.eventId ?? ev.eventoId ?? uid();
-                    const title = ev.title ?? ev.titulo ?? "Evento";
-                    const type = ev.type ?? ev.tipo ?? "Aviso";
-                    const startAt = ev.startAt ?? ev.inicioUtc ?? ev.start ?? "";
-                    const endAt = ev.endAt ?? ev.fimUtc ?? ev.end ?? "";
+                <div style={{ marginTop: 10 }}>
+                  {selectedDayEventos.length === 0 ? (
+                    <div className="panel-subtitle">Sem eventos para este dia.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {selectedDayEventos.map((ev) => (
+                        <div
+                          key={ev.id}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            padding: 12,
+                            border: "1px solid var(--border)",
+                            borderRadius: 14,
+                            background: "rgba(0,0,0,0.01)"
+                          }}
+                        >
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 700 }}>{ev.titulo}</div>
+                            <div className="panel-subtitle" style={{ marginTop: 4 }}>
+                              {formatDateTimeBR(ev.inicioUtc)}
+                              {ev.fimUtc ? ` — ${formatDateTimeBR(ev.fimUtc)}` : ""}
+                            </div>
+                            {ev.descricao ? <div style={{ marginTop: 8 }}>{ev.descricao}</div> : null}
+                            <div className="panel-subtitle" style={{ marginTop: 8 }}>
+                              {ev.turmaId == null
+                                ? "Evento geral (todas as turmas)"
+                                : `Turma: ${ev.turmaCodigo || ev.turmaNome || ev.turmaId}`}
+                            </div>
+                          </div>
 
-                    return (
-                      <li key={id} className="calendar-event-item">
-                        <div className="calendar-event-dot" />
-                        <div style={{ flex: 1 }}>
-                          <div className="calendar-event-title" style={{ fontWeight: 700 }}>
-                            {title}
-                          </div>
-                          <div className="calendar-event-meta" style={{ opacity: 0.85, marginTop: 2 }}>
-                            <span style={{ fontWeight: 600 }}>{type}</span>
-                            {" · "}
-                            {formatPt(startAt)} — {formatPt(endAt)}
-                          </div>
-                          <div style={{ opacity: 0.7, marginTop: 4, fontSize: 12 }}>
-                            Criado por: {ev.createdBy ?? ev.criadoPor ?? "—"} {ev.createdByRole ? `(${ev.createdByRole})` : ""}
-                          </div>
-                        </div>
-
-                        {canManage && (
-                          <div style={{ display: "flex", gap: 8 }}>
-                            <button type="button" className="btn-secondary" onClick={() => openEditEvent(ev)}>
+                          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                            <button
+                              className="btn-secondary btn-small btn-inline"
+                              type="button"
+                              onClick={() => openEditarEvento(ev)}
+                              disabled={deletingEvento}
+                            >
                               Editar
                             </button>
-                            <button type="button" className="btn-secondary" onClick={() => deleteEvent(ev)}>
-                              Remover
+                            <button
+                              className="btn-secondary btn-small btn-inline"
+                              type="button"
+                              onClick={() => excluirEvento(ev.id)}
+                              disabled={deletingEvento}
+                              style={{ borderColor: "rgba(220,38,38,.35)", color: "#dc2626" }}
+                            >
+                              Excluir
                             </button>
                           </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
+        </div>
 
-          {/* COLUNA LATERAL */}
-          <aside className="teacher-aside">
-            <div className="teacher-card">
-              <h3 className="panel-title">Avisos da turma</h3>
-              <p className="panel-subtitle" style={{ marginTop: 4 }}>
-                {canManage
-                  ? "Publique comunicados rápidos. O aluno vê no Dashboard e aqui."
-                  : "Aqui ficam os comunicados oficiais da sua turma."}
-              </p>
+        {/* COLUNA DIREITA */}
+        <div>
+          <div className="teacher-card">
+            <h3 style={{ marginBottom: 6, fontWeight: 700 }}>Avisos / Notificações</h3>
+            <p className="panel-subtitle" style={{ marginBottom: 12 }}>
+              Publique comunicações rápidas. O aluno vê no Dashboard.
+            </p>
 
-              {canManage && (
-                <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                  <div>
-                    <label className="teacher-label">Título</label>
-                    <input
-                      value={notifTitle}
-                      onChange={(e) => setNotifTitle(e.target.value)}
-                      placeholder="Ex: Mudança de sala / Aviso importante"
-                      style={{ ...inputBaseStyle(theme), marginTop: 6 }}
-                    />
-                  </div>
+            <form onSubmit={publicarNotificacao} className="form-card">
+              <div className="form-field">
+                <label>Destino</label>
+                <select
+                  value={notifTarget}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setNotifTarget(v);
 
-                  <div>
-                    <label className="teacher-label">Mensagem</label>
-                    <textarea
-                      value={notifMsg}
-                      onChange={(e) => setNotifMsg(e.target.value)}
-                      placeholder="Escreva um aviso curto e objetivo..."
-                      rows={4}
-                      style={{ ...inputBaseStyle(theme), marginTop: 6, resize: "vertical" }}
-                    />
-                  </div>
-
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={publishNotif}
-                    disabled={!selectedTurmaId || !notifTitle.trim() || !notifMsg.trim()}
-                  >
-                    Publicar aviso
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="teacher-card">
-              <h3 className="panel-title">Últimos avisos</h3>
-
-              {notifs.length === 0 ? (
-                <p className="panel-subtitle">Sem avisos (ou ainda não publicados).</p>
-              ) : (
-                <ul className="student-notifications" style={{ marginTop: 10 }}>
-                  {notifs.slice(0, 8).map((n) => {
-                    const id = n.id ?? n.notificacaoId ?? uid();
-                    const title = n.title ?? n.titulo ?? "Aviso";
-                    const msg = n.message ?? n.mensagem ?? "";
-                    const createdAt = n.createdAt ?? n.criadoEm ?? "";
-
-                    return (
-                      <li key={id} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                        <div style={{ flex: 1 }}>
-                          <strong>{title}</strong>
-                          <div style={{ opacity: 0.9, marginTop: 2 }}>{msg}</div>
-                          <div style={{ opacity: 0.7, marginTop: 6, fontSize: 12 }}>
-                            {createdAt ? `Publicado em ${formatPt(createdAt)}` : ""}{" "}
-                            {n.createdBy ? `· ${n.createdBy}` : ""}
-                          </div>
-                        </div>
-
-                        {canManage && (
-                          <button type="button" className="btn-secondary" onClick={() => deleteNotif(n)}>
-                            Remover
-                          </button>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          </aside>
-        </section>
-      </main>
-
-      {/* MODAL EVENTO */}
-      {modalEventOpen && (
-        <div
-          onClick={closeEventModal}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(2,6,23,0.55)",
-            zIndex: 9998,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "min(760px, 100%)",
-              borderRadius: 18,
-              background: theme === "dark" ? "rgba(2,6,23,0.92)" : "#fff",
-              border: "1px solid rgba(148,163,184,0.2)",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
-              padding: 16,
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <div>
-                <h3 style={{ margin: 0 }}>{editingEvent ? "Editar evento" : "Novo evento"}</h3>
-                <div style={{ opacity: 0.85, marginTop: 4 }}>
-                  {selectedTurma
-                    ? `${selectedTurma.turmaNome}${selectedTurma.turmaCodigo ? ` (${selectedTurma.turmaCodigo})` : ""}`
-                    : "Turma"}
-                </div>
+                    if ((v === "turma" || v === "aluno") && !notifTurmaId) {
+                      const firstReal = turmas[0]?.id ? String(turmas[0].id) : "";
+                      if (firstReal) setNotifTurmaId(firstReal);
+                    }
+                  }}
+                >
+                  <option value="geral">Geral (todos)</option>
+                  <option value="turma">Todos alunos da turma</option>
+                  <option value="aluno">Aluno específico</option>
+                </select>
               </div>
 
-              <button type="button" className="btn-secondary" onClick={closeEventModal}>
+              {(notifTarget === "turma" || notifTarget === "aluno") ? (
+                <div className="form-field">
+                  <label>Turma</label>
+                  <select
+                    value={notifTurmaId}
+                    onChange={(e) => setNotifTurmaId(e.target.value)}
+                    disabled={loadingTurmas || turmasOptionsReal.length === 0}
+                  >
+                    {turmasOptionsReal.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              {notifTarget === "aluno" ? (
+                <div className="form-field">
+                  <label>Aluno</label>
+                  <select
+                    value={alunoId}
+                    onChange={(e) => setAlunoId(e.target.value)}
+                    disabled={loadingAlunosTurma || alunosTurma.length === 0}
+                  >
+                    {alunosTurma.map((a) => (
+                      <option key={a.alunoId} value={a.alunoId}>
+                        {a.nome} — {a.ra}
+                      </option>
+                    ))}
+                  </select>
+
+                  {loadingAlunosTurma ? (
+                    <div className="panel-subtitle">Carregando alunos...</div>
+                  ) : alunosTurma.length === 0 ? (
+                    <div className="panel-subtitle">Nenhum aluno encontrado nessa turma.</div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="form-field">
+                <label>Título</label>
+                <input
+                  value={notifTitulo}
+                  onChange={(e) => setNotifTitulo(e.target.value)}
+                  placeholder="Ex: Mudança de sala / Aviso importante"
+                />
+              </div>
+
+              <div className="form-field">
+                <label>Mensagem</label>
+                <textarea
+                  value={notifMensagem}
+                  onChange={(e) => setNotifMensagem(e.target.value)}
+                  placeholder="Escreva um aviso curto e objetivo..."
+                  rows={4}
+                />
+              </div>
+
+              {erroNotifs ? <div className="form-error">{erroNotifs}</div> : null}
+
+              <div className="form-footer" style={{ marginTop: 0 }}>
+                <button className="btn-primary btn-inline" type="submit" disabled={savingNotif}>
+                  {savingNotif ? "Enviando..." : "Publicar"}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div className="teacher-card" style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ margin: 0, fontWeight: 700 }}>Últimas notificações</h3>
+              <button
+                className="btn-secondary btn-small btn-inline"
+                type="button"
+                onClick={carregarNotificacoesMine}
+                disabled={loadingNotifs}
+              >
+                Atualizar
+              </button>
+            </div>
+
+            {loadingNotifs ? <div style={{ marginTop: 10 }}>Carregando...</div> : null}
+            {notifs.length === 0 && !loadingNotifs ? (
+              <div className="panel-subtitle" style={{ marginTop: 8 }}>
+                Sem notificações (ou ainda não publicadas).
+              </div>
+            ) : null}
+
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+              {notifs.slice(0, 8).map((n) => {
+                const created = n.criadoEmUtc ?? n.CriadoEmUtc;
+                return (
+                  <div
+                    key={n.id}
+                    style={{
+                      padding: 12,
+                      border: "1px solid var(--border)",
+                      borderRadius: 14,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      background: "rgba(0,0,0,0.01)"
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700 }}>{n.titulo}</div>
+                      <div className="panel-subtitle" style={{ marginTop: 4 }}>
+                        {created ? formatDateTimeBR(created) : ""}
+                      </div>
+                      <div style={{ marginTop: 8 }}>{n.mensagem}</div>
+                      <div className="panel-subtitle" style={{ marginTop: 8 }}>
+                        {n.usuarioId == null ? "Geral (todos)" : "Direcionada"}
+                      </div>
+                    </div>
+
+                    <button
+                      className="btn-secondary btn-small btn-inline"
+                      type="button"
+                      onClick={() => excluirNotificacao(n.id)}
+                      style={{ borderColor: "rgba(220,38,38,.35)", color: "#dc2626", height: 34 }}
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* MODAL EVENTO */}
+      {showEventModal ? (
+        <div
+          className="modal-overlay"
+          onMouseDown={(e) => {
+            if (e.target?.classList?.contains("modal-overlay")) setShowEventModal(false);
+          }}
+        >
+          <div className="modal-card">
+            <div className="modal-header">
+              <div>
+                <div className="modal-title">{eventoEditando ? "Editar evento" : "Novo evento"}</div>
+                <div className="panel-subtitle">Crie um evento para turma ou geral.</div>
+              </div>
+              <button className="btn-secondary btn-small btn-inline" type="button" onClick={() => setShowEventModal(false)}>
                 Fechar
               </button>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 12, marginTop: 14 }}>
-              <div>
-                <label className="teacher-label">Título</label>
+            <form onSubmit={salvarEvento} className="form-card" style={{ marginTop: 12 }}>
+              <div className="form-field">
+                <label>Título</label>
                 <input
-                  value={eventTitle}
-                  onChange={(e) => setEventTitle(e.target.value)}
-                  placeholder="Ex: Prova bimestral / Reunião de alinhamento"
-                  style={{ ...inputBaseStyle(theme), marginTop: 6 }}
+                  value={eventoTitulo}
+                  onChange={(e) => setEventoTitulo(e.target.value)}
+                  placeholder="Ex: Prova / Entrega de trabalho"
                 />
               </div>
 
-              <div>
-                <label className="teacher-label">Tipo</label>
-                <select
-                  value={eventType}
-                  onChange={(e) => setEventType(e.target.value)}
-                  style={{ ...inputBaseStyle(theme), marginTop: 6 }}
-                >
-                  {EVENT_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="teacher-label">Início</label>
-                <input
-                  type="datetime-local"
-                  value={eventStart}
-                  onChange={(e) => setEventStart(e.target.value)}
-                  style={{ ...inputBaseStyle(theme), marginTop: 6 }}
+              <div className="form-field">
+                <label>Descrição (opcional)</label>
+                <textarea
+                  value={eventoDescricao}
+                  onChange={(e) => setEventoDescricao(e.target.value)}
+                  rows={3}
+                  placeholder="Detalhes do evento..."
                 />
               </div>
 
-              <div>
-                <label className="teacher-label">Fim</label>
-                <input
-                  type="datetime-local"
-                  value={eventEnd}
-                  onChange={(e) => setEventEnd(e.target.value)}
-                  style={{ ...inputBaseStyle(theme), marginTop: 6 }}
-                />
+              <div className="form-field">
+                <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <input type="checkbox" checked={eventoGeral} onChange={(e) => setEventoGeral(e.target.checked)} />
+                  Evento geral (todas as turmas)
+                </label>
+                <div className="panel-subtitle">
+                  Se marcado, o evento aparece para todos (TurmaId = null).
+                </div>
               </div>
-            </div>
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
-              <button type="button" className="btn-primary" onClick={saveEvent} disabled={!eventTitle.trim()}>
-                Salvar
-              </button>
-            </div>
+              <div className="form-grid">
+                <div className="form-field">
+                  <label>Início</label>
+                  <input type="datetime-local" value={eventoInicio} onChange={(e) => setEventoInicio(e.target.value)} />
+                </div>
+                <div className="form-field">
+                  <label>Fim (opcional)</label>
+                  <input type="datetime-local" value={eventoFim} onChange={(e) => setEventoFim(e.target.value)} />
+                </div>
+              </div>
+
+              {erroSalvarEvento ? <div className="form-error">{erroSalvarEvento}</div> : null}
+
+              <div className="form-footer">
+                <button className="btn-secondary btn-inline" type="button" onClick={() => setShowEventModal(false)}>
+                  Cancelar
+                </button>
+                <button className="btn-primary btn-inline" type="submit" disabled={savingEvento}>
+                  {savingEvento ? "Salvando..." : (eventoEditando ? "Salvar alterações" : "Salvar evento")}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
