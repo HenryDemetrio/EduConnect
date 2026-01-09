@@ -1,4 +1,6 @@
-﻿using EduConnect.API.Data;
+﻿using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using EduConnect.API.Data;
 using EduConnect.API.DTOs;
 using EduConnect.API.Entities;
 using Microsoft.AspNetCore.Authorization;
@@ -16,6 +18,20 @@ namespace EduConnect.API.Controllers
         public TurmasController(EduConnectContext ctx)
         {
             _ctx = ctx;
+        }
+
+        private int GetUserIdFromToken()
+        {
+            // tenta "userId" (se você tiver colocado), depois "sub"/NameIdentifier
+            var raw =
+                User.FindFirstValue("userId") ??
+                User.FindFirstValue(JwtRegisteredClaimNames.Sub) ??
+                User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (string.IsNullOrWhiteSpace(raw) || !int.TryParse(raw, out var userId))
+                throw new UnauthorizedAccessException("Token inválido (não foi possível obter o userId).");
+
+            return userId;
         }
 
         // POST /turmas  (ADMIN)
@@ -47,7 +63,6 @@ namespace EduConnect.API.Controllers
             _ctx.Turmas.Add(turma);
             await _ctx.SaveChangesAsync();
 
-            // 201 Created padrão REST: Location + corpo enxuto com id
             return CreatedAtAction(
                 nameof(GetById),
                 new { id = turma.Id },
@@ -61,6 +76,7 @@ namespace EduConnect.API.Controllers
         public async Task<ActionResult<IEnumerable<TurmaResponse>>> GetAll()
         {
             var dados = await _ctx.Turmas
+                .AsNoTracking()
                 .Select(t => new TurmaResponse
                 {
                     Id = t.Id,
@@ -78,7 +94,7 @@ namespace EduConnect.API.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<TurmaResponse>> GetById(int id)
         {
-            var t = await _ctx.Turmas.FirstOrDefaultAsync(x => x.Id == id);
+            var t = await _ctx.Turmas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
             if (t == null)
                 return NotFound(new { message = "Turma não encontrada." });
 
@@ -93,7 +109,7 @@ namespace EduConnect.API.Controllers
             return Ok(resp);
         }
 
-        // PUT /turmas/{id}  (ADMIN) - atualiza dados da turma
+        // PUT /turmas/{id}  (ADMIN)
         [HttpPut("{id:int}")]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> Update(int id, [FromBody] CreateTurmaRequest req)
@@ -111,7 +127,6 @@ namespace EduConnect.API.Controllers
             if (turma == null)
                 return NotFound(new { message = "Turma não encontrada." });
 
-            // garantir código único, ignorando a própria turma
             var codigoExiste = await _ctx.Turmas
                 .AnyAsync(t => t.Codigo == req.Codigo && t.Id != id);
             if (codigoExiste)
@@ -122,8 +137,6 @@ namespace EduConnect.API.Controllers
             turma.Ano = req.Ano;
 
             await _ctx.SaveChangesAsync();
-
-            // padrão comum em REST: 204 NoContent pra update sem corpo
             return NoContent();
         }
 
@@ -139,15 +152,45 @@ namespace EduConnect.API.Controllers
             if (turma == null)
                 return NotFound(new { message = "Turma não encontrada." });
 
-            // se quiser, pode impedir excluir turma com matrículas
             if (turma.Matriculas != null && turma.Matriculas.Any())
                 return Conflict(new { message = "Não é possível excluir turma com alunos matriculados." });
 
             _ctx.Turmas.Remove(turma);
             await _ctx.SaveChangesAsync();
-
-            // padrão: 204 NoContent em deleção bem sucedida
             return NoContent();
+        }
+
+        // GET /turmas/minhas (PROFESSOR)
+        [HttpGet("minhas")]
+        [Authorize(Roles = "Professor")]
+        public async Task<IActionResult> GetMinhas()
+        {
+            var userId = GetUserIdFromToken();
+
+            var professor = await _ctx.Professores
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.UsuarioId == userId);
+
+            if (professor == null)
+                return Ok(new List<TurmaResponse>());
+
+            // pega turmas onde ele tem TurmaDisciplina
+            var turmas = await _ctx.TurmaDisciplinas
+                .AsNoTracking()
+                .Where(td => td.ProfessorId == professor.Id)
+                .Select(td => new TurmaResponse
+                {
+                    Id = td.Turma.Id,
+                    Nome = td.Turma.Nome,
+                    Codigo = td.Turma.Codigo,
+                    Ano = td.Turma.Ano
+                })
+                .GroupBy(t => t.Id)          // remove duplicados por Id
+                .Select(g => g.First())
+                .OrderBy(t => t.Nome)
+                .ToListAsync();
+
+            return Ok(turmas);
         }
     }
 }

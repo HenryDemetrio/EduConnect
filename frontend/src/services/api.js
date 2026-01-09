@@ -37,9 +37,23 @@ export async function apiRequest(path, options = {}) {
   return isJson ? resp.json() : resp.text();
 }
 
-export async function apiJson(path, method = "GET", body = null) {
+// apiJson suporta 2 assinaturas:
+// 1) apiJson(path, "POST", body)
+// 2) apiJson(path, { method: "POST", body, headers })
+export async function apiJson(path, methodOrOptions = "GET", body = null) {
+  // (2) apiJson(path, { method, body, headers })
+  if (methodOrOptions && typeof methodOrOptions === "object") {
+    const { method = "GET", body: rawBody = null, headers = undefined } = methodOrOptions;
+    return apiRequest(path, {
+      method,
+      headers,
+      body: rawBody ? JSON.stringify(rawBody) : null,
+    });
+  }
+
+  // (1) apiJson(path, "POST", body)
   return apiRequest(path, {
-    method,
+    method: methodOrOptions,
     body: body ? JSON.stringify(body) : null,
   });
 }
