@@ -58,6 +58,74 @@ namespace EduConnect.API.Controllers
                 .AnyAsync(td => td.Id == turmaDisciplinaId && td.ProfessorId == professorId);
         }
 
+        // ✅ GET /avaliacoes/me (ALUNO) -> usado pelo Dashboard para montar gráfico
+        [HttpGet("me")]
+        [Authorize(Roles = "Aluno")]
+        public async Task<IActionResult> GetMine()
+        {
+            var userId = GetUserIdFromToken();
+
+            var aluno = await _ctx.Alunos.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.UsuarioId == userId);
+
+            if (aluno == null)
+                return Ok(new List<object>());
+
+            var dados = await _ctx.Avaliacoes
+                .AsNoTracking()
+                .Where(a => a.AlunoId == aluno.Id)
+                .Include(a => a.TurmaDisciplina)!.ThenInclude(td => td.Disciplina)
+                .Select(a => new
+                {
+                    disciplinaNome = a.TurmaDisciplina!.Disciplina!.Nome,
+                    nota = a.Nota,
+                    frequencia = a.Frequencia
+                })
+                .ToListAsync();
+
+            return Ok(dados);
+        }
+
+        // ✅ GET /avaliacoes/resumo?turmaId=1 (ADMIN/PROFESSOR)
+        // retorna média por disciplina (0-10)
+        [HttpGet("resumo")]
+        [Authorize(Roles = "Admin,Professor")]
+        public async Task<IActionResult> GetResumo([FromQuery] int? turmaId = null)
+        {
+            IQueryable<Avaliacao> q = _ctx.Avaliacoes
+                .AsNoTracking()
+                .Include(a => a.TurmaDisciplina)!.ThenInclude(td => td.Disciplina);
+
+            if (User.IsInRole("Professor"))
+            {
+                var professorId = await GetProfessorIdOrThrowAsync();
+                q = q.Where(a => a.TurmaDisciplina!.ProfessorId == professorId);
+            }
+
+            if (turmaId.HasValue)
+            {
+                q = q.Where(a => a.TurmaDisciplina!.TurmaId == turmaId.Value);
+            }
+
+            var resumo = await q
+                .GroupBy(a => new
+                {
+                    DisciplinaId = a.TurmaDisciplina!.DisciplinaId,
+                    DisciplinaNome = a.TurmaDisciplina!.Disciplina!.Nome
+                })
+                .Select(g => new
+                {
+                    disciplinaId = g.Key.DisciplinaId,
+                    disciplinaNome = g.Key.DisciplinaNome,
+                    mediaNota = Math.Round(g.Average(x => x.Nota), 1),
+                    total = g.Count()
+                })
+                .OrderBy(x => x.disciplinaNome)
+                .ToListAsync();
+
+            return Ok(resumo);
+        }
+
         // POST /avaliacoes  (ADMIN / PROFESSOR) -> registrar nota + frequência
         [HttpPost]
         [Authorize(Roles = "Admin,Professor")]
@@ -87,7 +155,7 @@ namespace EduConnect.API.Controllers
             if (!(await ProfessorPodeTurmaDisciplinaAsync(req.TurmaDisciplinaId)))
                 return Forbid();
 
-            // ✅ (Recomendado) aluno precisa estar matriculado na turma dessa disciplina
+            // ✅ aluno precisa estar matriculado na turma dessa disciplina
             var matriculado = await _ctx.Matriculas
                 .AsNoTracking()
                 .AnyAsync(m => m.AlunoId == req.AlunoId && m.TurmaId == turmaDisciplina.TurmaId);

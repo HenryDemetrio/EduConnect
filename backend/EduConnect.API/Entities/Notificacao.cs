@@ -15,5 +15,9 @@
 
         public bool Lida { get; set; }
         public DateTime? LidaEmUtc { get; set; }
+
+        public int? TurmaId { get; set; }
+        public Turma? Turma { get; set; }
+
     }
 }

@@ -522,9 +522,9 @@ export default function AgendaAvisos() {
         {/* COLUNA ESQUERDA */}
         <div>
           <div className="teacher-card">
-            <div className="agenda-toolbar" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-                <div className="form-field" style={{ minWidth: 280 }}>
+            <div className="agenda-toolbar">
+              <div className="agenda-toolbar__left">
+                <div className="form-field" style={{ minWidth: 100, margin: 0 }}>
                   <label>Turma</label>
                   <select
                     value={turmaId}
@@ -537,7 +537,7 @@ export default function AgendaAvisos() {
                   </select>
                 </div>
 
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div className="agenda-month-nav">
                   <button
                     className="btn-secondary btn-small btn-inline"
                     onClick={() => setCursorMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
@@ -547,7 +547,7 @@ export default function AgendaAvisos() {
                     ←
                   </button>
 
-                  <div style={{ fontWeight: 600 }}>{monthLabel}</div>
+                  <div className="agenda-month-title">{monthLabel}</div>
 
                   <button
                     className="btn-secondary btn-small btn-inline"
@@ -560,7 +560,7 @@ export default function AgendaAvisos() {
                 </div>
               </div>
 
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div className="agenda-toolbar__right">
                 <button
                   className="btn-primary btn-inline"
                   type="button"
@@ -583,19 +583,17 @@ export default function AgendaAvisos() {
 
             {erroEventos ? <div className="form-error" style={{ marginTop: 10 }}>{erroEventos}</div> : null}
 
-            {/* CALENDÁRIO */}
+            {/* ✅ CALENDÁRIO compatível com CSS agenda-* */}
             <div style={{ marginTop: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8 }}>
+              <div className="agenda-weekdays">
                 {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((w) => (
-                  <div key={w} style={{ fontSize: 12, color: "var(--muted)", fontWeight: 700 }}>
-                    {w}
-                  </div>
+                  <div key={w} className="agenda-weekday">{w}</div>
                 ))}
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginTop: 8 }}>
+              <div className="agenda-grid">
                 {calendarDays.map((d, idx) => {
-                  if (!d) return <div key={`empty-${idx}`} style={{ height: 44 }} />;
+                  if (!d) return <div key={`empty-${idx}`} className="agenda-day empty" />;
 
                   const k = toDateKey(d);
                   const dayEvents = eventosByDay.get(k) || [];
@@ -607,36 +605,15 @@ export default function AgendaAvisos() {
                       type="button"
                       key={k}
                       onClick={() => setSelectedDayKey(k)}
-                      style={{
-                        height: 44,
-                        borderRadius: 12,
-                        border: isSelected ? "1px solid rgba(59,130,246,.35)" : "1px solid var(--border)",
-                        background: isSelected ? "rgba(59,130,246,.10)" : "var(--card)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: "0 10px",
-                        cursor: "pointer",
-                      }}
+                      className={[
+                        "agenda-day",
+                        isSelected ? "selected" : "",
+                        count > 0 ? "has-events" : "",
+                      ].join(" ").trim()}
+                      title={count > 0 ? `${count} evento(s)` : ""}
                     >
-                      <span style={{ fontWeight: 700 }}>{d.getDate()}</span>
-
-                      {count > 0 ? (
-                        <span
-                          style={{
-                            fontSize: 12,
-                            fontWeight: 700,
-                            padding: "2px 8px",
-                            borderRadius: 999,
-                            border: "1px solid var(--border)",
-                            color: "var(--muted)",
-                            background: "rgba(0,0,0,0.02)",
-                          }}
-                          title={`${count} evento(s)`}
-                        >
-                          {count}
-                        </span>
-                      ) : null}
+                      <span>{d.getDate()}</span>
+                      {count > 0 ? <span className="agenda-dot" /> : null}
                     </button>
                   );
                 })}
