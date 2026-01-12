@@ -181,6 +181,13 @@ namespace EduConnect.API.Data
                 .HasForeignKey(n => n.UsuarioId)
                 .OnDelete(DeleteBehavior.SetNull);
 
+            modelBuilder.Entity<Notificacao>()
+                .HasOne(n => n.Turma)
+                .WithMany()
+                .HasForeignKey(n => n.TurmaId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+
             modelBuilder.Entity<Tarefa>(e =>
             {
                 e.Property(x => x.Tipo).IsRequired().HasMaxLength(20);

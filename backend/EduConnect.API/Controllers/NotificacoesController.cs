@@ -27,7 +27,112 @@ namespace EduConnect.API.Controllers
             return userId;
         }
 
-        // GET /notificacoes/me  (Aluno/Professor/Admin -> globais + do usuário)
+        // ✅ FEED DO DASHBOARD
+        // GET /notificacoes/feed?turmaId=1
+        // - Aluno: Geral + Turma (NÃO inclui diretas)
+        // - Admin/Professor: tudo (pode filtrar por turmaId)
+        [HttpGet("feed")]
+        [Authorize]
+        public async Task<IActionResult> Feed([FromQuery] int? turmaId = null)
+        {
+            var q = _ctx.Notificacoes
+                .AsNoTracking()
+                .Include(n => n.Turma)
+                .AsQueryable();
+
+            if (User.IsInRole("Aluno"))
+            {
+                var userId = GetUserIdFromToken();
+
+                // acha a turma do aluno (primeira matrícula)
+                var alunoTurmaId = await _ctx.Matriculas
+                    .AsNoTracking()
+                    .Where(m => m.Aluno.UsuarioId == userId)
+                    .Select(m => (int?)m.TurmaId)
+                    .FirstOrDefaultAsync();
+
+                // aluno vê:
+                // - globais: UsuarioId == null && TurmaId == null
+                // - da turma: TurmaId == alunoTurmaId && UsuarioId == null
+                // NÃO vê diretas: UsuarioId != null
+                q = q.Where(n =>
+                    (n.UsuarioId == null && n.TurmaId == null) ||
+                    (alunoTurmaId.HasValue && n.UsuarioId == null && n.TurmaId == alunoTurmaId.Value)
+                );
+
+                var listAluno = await q
+                    .OrderByDescending(n => n.CriadoEmUtc)
+                    .Take(60)
+                    .Select(n => new
+                    {
+                        n.Id,
+                        n.Titulo,
+                        n.Mensagem,
+                        criadoEmUtc = n.CriadoEmUtc,
+                        n.TurmaId,
+                        turmaNome = n.Turma != null ? n.Turma.Nome : null,
+                        escopo = n.TurmaId != null ? "Turma" : "Geral"
+                    })
+                    .ToListAsync();
+
+                return Ok(listAluno);
+            }
+
+            // Admin/Professor
+            if (turmaId.HasValue)
+            {
+                // professor só pode ver turma que leciona
+                if (User.IsInRole("Professor"))
+                {
+                    var userId = GetUserIdFromToken();
+                    var professor = await _ctx.Professores.AsNoTracking()
+                        .FirstOrDefaultAsync(p => p.UsuarioId == userId);
+
+                    if (professor == null) return Forbid();
+
+                    var leciona = await _ctx.TurmaDisciplinas.AsNoTracking()
+                        .AnyAsync(td => td.TurmaId == turmaId.Value && td.ProfessorId == professor.Id);
+
+                    if (!leciona) return Forbid();
+                }
+
+                // filtra: globais + turma específica + diretas de alunos da turma
+                var alunoUserIds = await _ctx.Matriculas.AsNoTracking()
+                    .Where(m => m.TurmaId == turmaId.Value)
+                    .Select(m => m.Aluno.UsuarioId)
+                    .Distinct()
+                    .ToListAsync();
+
+                q = q.Where(n =>
+                    (n.UsuarioId == null && n.TurmaId == null) ||
+                    (n.UsuarioId == null && n.TurmaId == turmaId.Value) ||
+                    (n.UsuarioId.HasValue && alunoUserIds.Contains(n.UsuarioId.Value))
+                );
+            }
+
+            var list = await q
+                .OrderByDescending(n => n.CriadoEmUtc)
+                .Take(80)
+                .Select(n => new
+                {
+                    n.Id,
+                    n.Titulo,
+                    n.Mensagem,
+                    criadoEmUtc = n.CriadoEmUtc,
+                    n.UsuarioId,
+                    n.TurmaId,
+                    turmaNome = n.Turma != null ? n.Turma.Nome : null,
+                    escopo = n.UsuarioId != null ? "Direta" : (n.TurmaId != null ? "Turma" : "Geral"),
+                    n.Lida,
+                    n.LidaEmUtc
+                })
+                .ToListAsync();
+
+            return Ok(list);
+        }
+
+        // GET /notificacoes/me  (qualquer role)
+        // mantém pro AgendaAvisos (globais + diretas do usuário)
         [HttpGet("me")]
         [Authorize]
         public async Task<IActionResult> ListMe()
@@ -44,8 +149,9 @@ namespace EduConnect.API.Controllers
                     n.Id,
                     n.Titulo,
                     n.Mensagem,
-                    criadaEmUtc = n.CriadoEmUtc,
+                    criadoEmUtc = n.CriadoEmUtc,
                     n.UsuarioId,
+                    n.TurmaId,
                     n.Lida,
                     n.LidaEmUtc
                 })
@@ -54,7 +160,7 @@ namespace EduConnect.API.Controllers
             return Ok(list);
         }
 
-        // GET /notificacoes?turmaId=1  (Admin/Professor -> globais + notificações para alunos da turma)
+        // GET /notificacoes?turmaId=1  (Admin/Professor) - opcional pra telas internas
         [HttpGet]
         [Authorize(Roles = "Admin,Professor")]
         public async Task<IActionResult> List([FromQuery] int? turmaId = null)
@@ -63,7 +169,7 @@ namespace EduConnect.API.Controllers
 
             if (turmaId.HasValue)
             {
-                // Se professor, só pode ver turma que leciona
+                // professor só pode ver turma que leciona
                 if (User.IsInRole("Professor"))
                 {
                     var userId = GetUserIdFromToken();
@@ -78,13 +184,18 @@ namespace EduConnect.API.Controllers
                     if (!leciona) return Forbid();
                 }
 
+                // globais + turma específica + diretas de alunos daquela turma
                 var alunoUserIds = await _ctx.Matriculas.AsNoTracking()
                     .Where(m => m.TurmaId == turmaId.Value)
                     .Select(m => m.Aluno.UsuarioId)
                     .Distinct()
                     .ToListAsync();
 
-                q = q.Where(n => n.UsuarioId == null || (n.UsuarioId.HasValue && alunoUserIds.Contains(n.UsuarioId.Value)));
+                q = q.Where(n =>
+                    (n.UsuarioId == null && n.TurmaId == null) ||
+                    (n.UsuarioId == null && n.TurmaId == turmaId.Value) ||
+                    (n.UsuarioId.HasValue && alunoUserIds.Contains(n.UsuarioId.Value))
+                );
             }
 
             var list = await q
@@ -95,8 +206,9 @@ namespace EduConnect.API.Controllers
                     n.Id,
                     n.Titulo,
                     n.Mensagem,
-                    criadaEmUtc = n.CriadoEmUtc,
+                    criadoEmUtc = n.CriadoEmUtc,
                     n.UsuarioId,
+                    n.TurmaId,
                     n.Lida,
                     n.LidaEmUtc
                 })
@@ -106,8 +218,8 @@ namespace EduConnect.API.Controllers
         }
 
         // POST /notificacoes (Admin/Professor)
-        // - Admin pode criar global (UsuarioId null) ou para um usuário
-        // - Professor só pode criar para um usuário (não global)
+        // - Admin pode criar global (UsuarioId null, TurmaId null) ou direta (UsuarioId setado)
+        // - Professor só pode criar direta (não global)
         [HttpPost]
         [Authorize(Roles = "Admin,Professor")]
         public async Task<IActionResult> Create([FromBody] CreateNotificacaoRequest req)
@@ -120,7 +232,6 @@ namespace EduConnect.API.Controllers
             if (User.IsInRole("Professor") && req.UsuarioId == null)
                 return Forbid(); // professor não cria global
 
-            // se for para usuário específico, valida existência
             if (req.UsuarioId.HasValue)
             {
                 var existe = await _ctx.Usuarios.AsNoTracking().AnyAsync(u => u.Id == req.UsuarioId.Value);
@@ -131,8 +242,8 @@ namespace EduConnect.API.Controllers
             {
                 Titulo = req.Titulo.Trim(),
                 Mensagem = req.Mensagem.Trim(),
-                UsuarioId = req.UsuarioId
-                // CriadoEmUtc já é default
+                UsuarioId = req.UsuarioId,
+                TurmaId = null // global ou direta, turma é pelo endpoint /turma/{id}
             };
 
             _ctx.Notificacoes.Add(n);
@@ -141,6 +252,7 @@ namespace EduConnect.API.Controllers
             return CreatedAtAction(nameof(ListMe), new { }, new { id = n.Id });
         }
 
+        // POST /notificacoes/aluno/{alunoId} (Admin/Professor) -> direta para o usuário do aluno
         [HttpPost("aluno/{alunoId:int}")]
         [Authorize(Roles = "Admin,Professor")]
         public async Task<IActionResult> CriarParaAluno(int alunoId, [FromBody] CreateNotificacaoRequest request)
@@ -160,6 +272,7 @@ namespace EduConnect.API.Controllers
                 Titulo = request.Titulo.Trim(),
                 Mensagem = request.Mensagem.Trim(),
                 UsuarioId = aluno.UsuarioId,
+                TurmaId = null,
                 CriadoEmUtc = DateTime.UtcNow
             };
 
@@ -169,8 +282,7 @@ namespace EduConnect.API.Controllers
             return Ok(new { ok = true, id = notif.Id });
         }
 
-
-        // POST /notificacoes/turma/{turmaId}  (Admin/Professor) -> cria uma notificação para CADA aluno da turma
+        // ✅ POST /notificacoes/turma/{turmaId} (Admin/Professor) -> UMA notificação para a turma
         [HttpPost("turma/{turmaId:int}")]
         [Authorize(Roles = "Admin,Professor")]
         public async Task<IActionResult> CreateForTurma(int turmaId, [FromBody] CreateNotificacaoRequest req)
@@ -180,7 +292,7 @@ namespace EduConnect.API.Controllers
             if (string.IsNullOrWhiteSpace(req.Mensagem))
                 return BadRequest(new { message = "Mensagem é obrigatória." });
 
-            // Se professor, só pode enviar pra turma que leciona
+            // professor só pode enviar pra turma que leciona
             if (User.IsInRole("Professor"))
             {
                 var userId = GetUserIdFromToken();
@@ -195,30 +307,25 @@ namespace EduConnect.API.Controllers
                 if (!leciona) return Forbid();
             }
 
-            var alunoUserIds = await _ctx.Matriculas.AsNoTracking()
-                .Where(m => m.TurmaId == turmaId)
-                .Select(m => m.Aluno.UsuarioId)
-                .Distinct()
-                .ToListAsync();
+            var turmaExiste = await _ctx.Turmas.AsNoTracking().AnyAsync(t => t.Id == turmaId);
+            if (!turmaExiste) return NotFound(new { message = "Turma não encontrada." });
 
-            if (alunoUserIds.Count == 0)
-                return Ok(new { message = "Turma sem alunos matriculados.", count = 0 });
-
-            foreach (var uid in alunoUserIds)
+            var notif = new Notificacao
             {
-                _ctx.Notificacoes.Add(new Notificacao
-                {
-                    Titulo = req.Titulo.Trim(),
-                    Mensagem = req.Mensagem.Trim(),
-                    UsuarioId = uid
-                });
-            }
+                Titulo = req.Titulo.Trim(),
+                Mensagem = req.Mensagem.Trim(),
+                UsuarioId = null,
+                TurmaId = turmaId,
+                CriadoEmUtc = DateTime.UtcNow
+            };
 
+            _ctx.Notificacoes.Add(notif);
             await _ctx.SaveChangesAsync();
-            return Ok(new { message = "Notificações criadas para a turma.", count = alunoUserIds.Count });
+
+            return Ok(new { message = "Notificação criada para a turma.", id = notif.Id });
         }
 
-        // DELETE /notificacoes/{id} (Admin) - útil pra “remover aviso” na UI
+        // DELETE /notificacoes/{id} (Admin)
         [HttpDelete("{id:int}")]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> Delete(int id)
