@@ -187,24 +187,41 @@ namespace EduConnect.API.Data
                 .HasForeignKey(n => n.TurmaId)
                 .OnDelete(DeleteBehavior.SetNull);
 
-
+            // ===== TAREFA =====
             modelBuilder.Entity<Tarefa>(e =>
             {
                 e.Property(x => x.Tipo).IsRequired().HasMaxLength(20);
                 e.Property(x => x.Titulo).IsRequired().HasMaxLength(120);
                 e.Property(x => x.Descricao).HasMaxLength(2000);
 
+                // ✅ novo: Numero (P1/P2/P3 e T1/T2/T3). Para legado pode ser 0.
+                e.Property(x => x.Numero).HasDefaultValue(0);
+
                 e.Property(x => x.Peso).HasPrecision(5, 2);
                 e.Property(x => x.NotaMaxima).HasPrecision(5, 2);
 
+                // ✅ PDF do enunciado (Professor)
+                e.Property(x => x.EnunciadoArquivoNome).HasMaxLength(255);
+                e.Property(x => x.EnunciadoArquivoPath).HasMaxLength(500);
+                e.Property(x => x.EnunciadoContentType).HasMaxLength(120);
+                e.Property(x => x.EnunciadoSizeBytes);
+
                 e.HasOne(x => x.TurmaDisciplina)
-                  .WithMany()
+                  .WithMany(td => td.Tarefas)
                   .HasForeignKey(x => x.TurmaDisciplinaId)
                   .OnDelete(DeleteBehavior.Cascade);
 
+                // existente
                 e.HasIndex(x => new { x.TurmaDisciplinaId, x.DataEntrega });
+
+                // ✅ regra robusta: não pode duplicar Tipo+Numero dentro da mesma TurmaDisciplina
+                // (filtrado pra não quebrar registros antigos com Numero=0)
+                e.HasIndex(x => new { x.TurmaDisciplinaId, x.Tipo, x.Numero })
+                  .IsUnique()
+                  .HasFilter("[Numero] > 0");
             });
 
+            // ===== ENTREGA TAREFA =====
             modelBuilder.Entity<EntregaTarefa>(e =>
             {
                 e.Property(x => x.ArquivoNome).IsRequired().HasMaxLength(255);

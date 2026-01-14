@@ -6,6 +6,10 @@
         public int TurmaDisciplinaId { get; set; }
 
         public string Tipo { get; set; } = "Tarefa";
+
+        // ✅ novo
+        public int Numero { get; set; }
+
         public string Titulo { get; set; } = "";
         public string? Descricao { get; set; }
 
@@ -15,6 +19,9 @@
 
         public DateTime CriadaEm { get; set; }
         public bool Ativa { get; set; }
+
+        // ✅ novo: link do PDF do enunciado (professor)
+        public string? EnunciadoUrl { get; set; }
 
         public int TurmaId { get; set; }
         public string TurmaCodigo { get; set; } = "";
