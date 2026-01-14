@@ -21,5 +21,16 @@
 
         // depois podemos usar isso no boletim
         public string Situacao { get; set; } = null!;
+
+        public decimal? P1 { get; set; }
+        public decimal? P2 { get; set; }
+        public decimal? T1 { get; set; }
+        public decimal? T2 { get; set; }
+        public decimal? T3 { get; set; }
+        public decimal? P3 { get; set; } // Recuperação
+
+        public decimal? MediaFinal { get; set; }
+        public decimal? MediaPosRec { get; set; }
+
     }
 }

@@ -12,6 +12,6 @@
 
         public int? ProfessorId { get; set; }
         public Professor? Professor { get; set; }
-
+        public ICollection<Tarefa> Tarefas { get; set; } = new List<Tarefa>();
     }
 }
