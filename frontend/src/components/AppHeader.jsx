@@ -18,7 +18,7 @@ function roleLinks(role) {
   if (role === "Professor") {
     return [
       { to: "/dashboard", label: "Dashboard" },
-      { to: "/painel-professor", label: "Turmas & Alunos" },
+      { to: "/painel-professor", label: "Painel Professor" },
       { to: "/professor/agenda", label: "Agenda & Avisos" },
     ];
   }
