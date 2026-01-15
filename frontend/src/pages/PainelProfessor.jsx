@@ -3,470 +3,440 @@ import { useTheme } from '../context/ThemeContext'
 import { useAuth } from '../context/AuthContext'
 import { apiJson } from '../services/api'
 
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-} from 'chart.js'
-import { Bar } from 'react-chartjs-2'
-
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
-
 // ---------- helpers ----------
+const BASE_URL = import.meta.env.VITE_API_URL || 'https://localhost:5230'
+
+function absUrl(path) {
+  if (!path) return ''
+  if (/^https?:\/\//i.test(path)) return path
+  return `${BASE_URL}${path.startsWith('/') ? path : `/${path}`}`
+}
+
 function clamp(n, min, max) {
   if (Number.isNaN(n)) return min
   return Math.min(max, Math.max(min, n))
 }
 
-function calcSituacao(nota, frequencia) {
-  if (frequencia < 75) return 'Reprovado por frequência'
-  if (nota >= 7) return 'Aprovado'
-  if (nota >= 5) return 'Recuperação'
-  return 'Reprovado por nota'
-}
-
-function formatUtc(dt) {
-  if (!dt) return ''
+function formatDateLocal(dt) {
+  if (!dt) return '—'
   const d = new Date(dt)
-  if (Number.isNaN(d.getTime())) return ''
+  if (Number.isNaN(d.getTime())) return '—'
   return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
 }
 
-function downloadCsv(filename, rows) {
-  const escape = (val) => {
-    const s = String(val ?? '')
-    if (/[;"\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
-    return s
-  }
+function labelTipo(tipo) {
+  if ((tipo || '').toLowerCase() === 'avaliacao') return 'Prova'
+  return 'Tarefa'
+}
 
-  const content = rows.map((r) => r.map(escape).join(';')).join('\n')
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
+function labelNumero(tipo, numero) {
+  const t = (tipo || '').toLowerCase()
+  const n = Number(numero || 0)
+  if (!n) return '—'
+  if (t === 'avaliacao') return `P${n}`
+  return `T${n}`
+}
 
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+function showErr(e) {
+  return (
+    e?.payload?.message ||
+    e?.message ||
+    (e?.status ? `Erro na API (${e.status})` : 'Erro na API')
+  )
 }
 
 export default function PainelProfessor() {
   const { theme } = useTheme()
   const { me } = useAuth()
 
-  // carregamentos
-  const [loadingTurmas, setLoadingTurmas] = useState(true)
-  const [loadingAlunos, setLoadingAlunos] = useState(false)
-  const [loadingStatus, setLoadingStatus] = useState(false)
-
-  // dados principais
+  // dropdowns (Turma -> Disciplina)
+  const [loadingTD, setLoadingTD] = useState(true)
   const [turmasDisciplinas, setTurmasDisciplinas] = useState([]) // /professores/me/turmas
-  const [selectedTdId, setSelectedTdId] = useState(null)
 
-  const [alunos, setAlunos] = useState([]) // /turmas/{turmaId}/alunos
-  const [search, setSearch] = useState('')
-  const [filtro, setFiltro] = useState('todos') // todos | pendente | aprovado | recuperacao | reprovado
-
-  // status de avaliação por aluno (para a TurmaDisciplina selecionada)
-  // { [alunoId]: { id, nota, frequencia, situacao } }
-  const [avaliacoesByAluno, setAvaliacoesByAluno] = useState({})
-
-  // modal de lançamento
-  const [modalOpen, setModalOpen] = useState(false)
-  const [modalAluno, setModalAluno] = useState(null)
-  const [nota, setNota] = useState('')
-  const [freq, setFreq] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [toast, setToast] = useState(null) // { type, text }
-
-  // extras (wow): eventos/notificações
-  const [eventos, setEventos] = useState([])
-  const [notifs, setNotifs] = useState([])
-
-  function showToast(type, text) {
-    setToast({ type, text })
-    setTimeout(() => setToast(null), 2800)
-  }
-
-  // ----------- carrega disciplinas/turmas do professor -----------
-  useEffect(() => {
-    let alive = true
-
-    async function loadTurmas() {
-      try {
-        setLoadingTurmas(true)
-        const data = await apiJson('/professores/me/turmas')
-
-        if (!alive) return
-        const list = Array.isArray(data) ? data : []
-        setTurmasDisciplinas(list)
-
-        if (list.length > 0) setSelectedTdId(list[0].turmaDisciplinaId)
-      } catch {
-        if (!alive) return
-        setTurmasDisciplinas([])
-        setSelectedTdId(null)
-      } finally {
-        if (!alive) return
-        setLoadingTurmas(false)
+  const turmas = useMemo(() => {
+    const map = new Map()
+    for (const x of turmasDisciplinas) {
+      if (!map.has(x.turmaId)) {
+        map.set(x.turmaId, { turmaId: x.turmaId, turmaNome: x.turmaNome, turmaCodigo: x.turmaCodigo })
       }
     }
+    return Array.from(map.values())
+  }, [turmasDisciplinas])
 
-    loadTurmas()
-    return () => {
-      alive = false
-    }
-  }, [])
+  const [selectedTurmaId, setSelectedTurmaId] = useState(null)
+  const disciplinasDaTurma = useMemo(() => {
+    if (!selectedTurmaId) return []
+    return turmasDisciplinas.filter((x) => x.turmaId === selectedTurmaId)
+  }, [turmasDisciplinas, selectedTurmaId])
+
+  const [selectedTdId, setSelectedTdId] = useState(null)
 
   const selected = useMemo(() => {
     return turmasDisciplinas.find((x) => x.turmaDisciplinaId === selectedTdId) || null
   }, [turmasDisciplinas, selectedTdId])
 
-  // ----------- carrega alunos da turma selecionada -----------
+  // alunos da turma (pra fechar boletim)
+  const [loadingAlunos, setLoadingAlunos] = useState(false)
+  const [alunos, setAlunos] = useState([]) // /turmas/{turmaId}/alunos
+
+  // tarefas (P1/P2/P3 e T1/T2/T3)
+  const [loadingTarefas, setLoadingTarefas] = useState(false)
+  const [tarefas, setTarefas] = useState([]) // /turma-disciplinas/{tdId}/tarefas
+
+  // expand entregas por tarefa
+  const [expandedTarefaId, setExpandedTarefaId] = useState(null)
+  const [loadingEntregas, setLoadingEntregas] = useState(false)
+  const [entregas, setEntregas] = useState([])
+
+  // criar tarefa (sem peso, sem notaMax)
+  const [creating, setCreating] = useState(false)
+  const [tipo, setTipo] = useState('Avaliacao')
+  const [numero, setNumero] = useState(1)
+  const [titulo, setTitulo] = useState('')
+  const [descricao, setDescricao] = useState('')
+  const [dataEntrega, setDataEntrega] = useState('')
+
+  // upload enunciado (PDF)
+  const [uploadingEnunciadoId, setUploadingEnunciadoId] = useState(null)
+
+  // corrigir entrega
+  const [modalEntregaOpen, setModalEntregaOpen] = useState(false)
+  const [modalEntrega, setModalEntrega] = useState(null)
+  const [notaEntrega, setNotaEntrega] = useState('')
+  const [feedbackEntrega, setFeedbackEntrega] = useState('')
+  const [savingEntrega, setSavingEntrega] = useState(false)
+
+  // fechar boletim
+  const [modalFecharOpen, setModalFecharOpen] = useState(false)
+  const [modalAluno, setModalAluno] = useState(null)
+  const [freq, setFreq] = useState('')
+  const [closing, setClosing] = useState(false)
+  const [resultadoFechamento, setResultadoFechamento] = useState(null)
+
+  // ranking (top alunos)
+  const [loadingRanking, setLoadingRanking] = useState(false)
+  const [ranking, setRanking] = useState([]) // /avaliacoes/resumo?turmaId=...
+
+  // toast
+  const [toast, setToast] = useState(null)
+  function showToast(type, text) {
+    setToast({ type, text })
+    setTimeout(() => setToast(null), 2800)
+  }
+
+  // ----------- load TurmasDisciplinas do professor -----------
   useEffect(() => {
     let alive = true
+    async function load() {
+      try {
+        setLoadingTD(true)
+        const data = await apiJson('/professores/me/turmas')
+        if (!alive) return
+        const list = Array.isArray(data) ? data : []
+        setTurmasDisciplinas(list)
 
+        if (list.length) {
+          const firstTurmaId = list[0].turmaId
+          setSelectedTurmaId(firstTurmaId)
+
+          const firstTd = list.find((x) => x.turmaId === firstTurmaId)
+          setSelectedTdId(firstTd?.turmaDisciplinaId ?? null)
+        } else {
+          setSelectedTurmaId(null)
+          setSelectedTdId(null)
+        }
+      } catch {
+        if (!alive) return
+        setTurmasDisciplinas([])
+        setSelectedTurmaId(null)
+        setSelectedTdId(null)
+      } finally {
+        if (!alive) return
+        setLoadingTD(false)
+      }
+    }
+    load()
+    return () => { alive = false }
+  }, [])
+
+  // se mudou turma, “reseta” disciplina para a primeira da turma
+  useEffect(() => {
+    if (!selectedTurmaId) {
+      setSelectedTdId(null)
+      return
+    }
+    const first = turmasDisciplinas.find((x) => x.turmaId === selectedTurmaId)
+    if (first) setSelectedTdId(first.turmaDisciplinaId)
+  }, [selectedTurmaId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ----------- load alunos da turma selecionada -----------
+  useEffect(() => {
+    let alive = true
     async function loadAlunos() {
       if (!selected?.turmaId) {
         setAlunos([])
-        setAvaliacoesByAluno({})
         return
       }
-
       try {
         setLoadingAlunos(true)
         const data = await apiJson(`/turmas/${selected.turmaId}/alunos`)
-
         if (!alive) return
-        const list = Array.isArray(data) ? data : []
-        setAlunos(list)
-
-        setAvaliacoesByAluno({})
+        setAlunos(Array.isArray(data) ? data : [])
       } catch {
         if (!alive) return
         setAlunos([])
-        setAvaliacoesByAluno({})
       } finally {
         if (!alive) return
         setLoadingAlunos(false)
       }
     }
-
     loadAlunos()
-    return () => {
-      alive = false
-    }
+    return () => { alive = false }
   }, [selected?.turmaId])
 
-  // ----------- carrega status (quem já foi avaliado nessa disciplina) -----------
-  useEffect(() => {
-    let alive = true
-
-    async function loadStatus() {
-      if (!selected?.turmaDisciplinaId || alunos.length === 0) return
-
-      try {
-        setLoadingStatus(true)
-
-        const results = await Promise.all(
-          alunos.map(async (a) => {
-            try {
-              const avals = await apiJson(`/avaliacoes/aluno/${a.alunoId}`)
-              const list = Array.isArray(avals) ? avals : []
-              const match = list.find((x) => x.turmaDisciplinaId === selected.turmaDisciplinaId)
-              if (!match) return [a.alunoId, null]
-              return [
-                a.alunoId,
-                {
-                  id: match.id,
-                  nota: match.nota,
-                  frequencia: match.frequencia,
-                  situacao: match.situacao,
-                },
-              ]
-            } catch {
-              return [a.alunoId, null]
-            }
-          })
-        )
-
-        if (!alive) return
-
-        const map = {}
-        for (const [alunoId, val] of results) {
-          if (val) map[alunoId] = val
-        }
-        setAvaliacoesByAluno(map)
-      } finally {
-        if (!alive) return
-        setLoadingStatus(false)
-      }
+  // ----------- ranking da turma (top por média) -----------
+  async function refreshRanking(turmaId = selected?.turmaId) {
+    if (!turmaId) {
+      setRanking([])
+      return
     }
-
-    loadStatus()
-    return () => {
-      alive = false
+    setLoadingRanking(true)
+    try {
+      // endpoint existe no back (você já usou no dashboard): /avaliacoes/resumo?turmaId=...
+      const data = await apiJson(`/avaliacoes/resumo?turmaId=${turmaId}`)
+      const list = Array.isArray(data) ? data : []
+      // “resumo” pode ser por disciplina; aqui a gente só usa como widget visual (top por mediaNota)
+      const top = [...list]
+        .filter(x => typeof x.mediaNota === 'number' || typeof x.mediaNota === 'string')
+        .map(x => ({ ...x, mediaNota: Number(x.mediaNota) }))
+        .sort((a, b) => (b.mediaNota ?? 0) - (a.mediaNota ?? 0))
+        .slice(0, 5)
+      setRanking(top)
+    } catch {
+      setRanking([])
+    } finally {
+      setLoadingRanking(false)
     }
-  }, [selected?.turmaDisciplinaId, alunos])
-
-  // ----------- extras: eventos e notificações (não quebram se não existir endpoint) -----------
-  useEffect(() => {
-    let alive = true
-
-    async function loadExtras() {
-      try {
-        const n = await apiJson('/notificacoes/me')
-        if (!alive) return
-        setNotifs(Array.isArray(n) ? n : [])
-      } catch {
-        if (!alive) return
-        setNotifs([])
-      }
-
-      if (selected?.turmaId) {
-        try {
-          const e = await apiJson(`/eventos?turmaId=${selected.turmaId}`)
-          if (!alive) return
-          setEventos(Array.isArray(e) ? e : [])
-        } catch {
-          if (!alive) return
-          setEventos([])
-        }
-      } else {
-        setEventos([])
-      }
-    }
-
-    loadExtras()
-    return () => {
-      alive = false
-    }
-  }, [selected?.turmaId])
-
-  // ----------- filtros/derivados -----------
-  const rows = useMemo(() => {
-    const q = search.trim().toLowerCase()
-
-    return alunos
-      .filter((a) => {
-        if (!q) return true
-        return (
-          (a.nome || '').toLowerCase().includes(q) ||
-          (a.ra || '').toLowerCase().includes(q) ||
-          (a.email || '').toLowerCase().includes(q)
-        )
-      })
-      .filter((a) => {
-        const av = avaliacoesByAluno[a.alunoId]
-        if (filtro === 'todos') return true
-        if (filtro === 'pendente') return !av
-        if (!av) return false
-
-        const sit = (av.situacao || '').toLowerCase()
-        if (filtro === 'aprovado') return sit.includes('aprovado')
-        if (filtro === 'recuperacao') return sit.includes('recuper')
-        if (filtro === 'reprovado') return sit.includes('reprov')
-        return true
-      })
-  }, [alunos, search, filtro, avaliacoesByAluno])
-
-  const stats = useMemo(() => {
-    const total = alunos.length
-    const avaliados = Object.keys(avaliacoesByAluno).length
-    const pendentes = total - avaliados
-
-    let somaNota = 0
-    let somaFreq = 0
-    let count = 0
-    let alertas = 0
-
-    for (const alunoIdStr of Object.keys(avaliacoesByAluno)) {
-      const av = avaliacoesByAluno[Number(alunoIdStr)]
-      if (!av) continue
-      somaNota += Number(av.nota || 0)
-      somaFreq += Number(av.frequencia || 0)
-      count++
-      if (Number(av.frequencia) < 75 || Number(av.nota) < 5) alertas++
-    }
-
-    const mediaNota = count ? somaNota / count : 0
-    const mediaFreq = count ? somaFreq / count : 0
-
-    return { total, avaliados, pendentes, mediaNota, mediaFreq, alertas }
-  }, [alunos, avaliacoesByAluno])
-
-  // gráfico (Top 10 por nota)
-  const chartData = useMemo(() => {
-    const items = alunos
-      .map((a) => {
-        const av = avaliacoesByAluno[a.alunoId]
-        return { nome: a.nome, nota: av?.nota ?? null }
-      })
-      .filter((x) => x.nota !== null)
-      .sort((a, b) => Number(b.nota) - Number(a.nota))
-      .slice(0, 10)
-
-    return {
-      labels: items.map((x) => x.nome),
-      datasets: [
-        {
-          label: 'Nota (0 a 10)',
-          data: items.map((x) => Number(x.nota)),
-          backgroundColor: 'rgba(2,132,199,0.25)',
-          borderColor: 'rgba(2,132,199,1)',
-          borderWidth: 2,
-          borderRadius: 12,
-          maxBarThickness: 40,
-        },
-      ],
-    }
-  }, [alunos, avaliacoesByAluno])
-
-  const chartOptions = useMemo(
-    () => ({
-      responsive: true,
-      scales: {
-        y: { beginAtZero: true, max: 10, ticks: { stepSize: 2 } },
-        x: { grid: { display: false } },
-      },
-      plugins: { legend: { display: false }, title: { display: false } },
-    }),
-    []
-  )
-
-  // ----------- modal actions -----------
-  function openModal(aluno) {
-    setModalAluno(aluno)
-    const existing = avaliacoesByAluno[aluno.alunoId]
-    setNota(existing ? String(existing.nota) : '')
-    setFreq(existing ? String(existing.frequencia) : '')
-    setModalOpen(true)
   }
 
-  function closeModal() {
-    setModalOpen(false)
-    setModalAluno(null)
-    setNota('')
-    setFreq('')
+  useEffect(() => {
+    refreshRanking()
+  }, [selected?.turmaId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ----------- load tarefas da TurmaDisciplina -----------
+  async function refreshTarefas(tdId = selected?.turmaDisciplinaId) {
+    if (!tdId) {
+      setTarefas([])
+      return
+    }
+    setLoadingTarefas(true)
+    try {
+      const data = await apiJson(`/turma-disciplinas/${tdId}/tarefas`)
+      setTarefas(Array.isArray(data) ? data : [])
+    } catch (e) {
+      setTarefas([])
+      showToast('error', showErr(e))
+    } finally {
+      setLoadingTarefas(false)
+    }
   }
 
-  async function salvarAvaliacao({ allowUpdate = true } = {}) {
-    if (!modalAluno || !selected?.turmaDisciplinaId) return
+  useEffect(() => {
+    setExpandedTarefaId(null)
+    setEntregas([])
+    refreshTarefas()
+  }, [selected?.turmaDisciplinaId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    const n = clamp(Number(String(nota).replace(',', '.')), 0, 10)
-    const f = clamp(Number(String(freq).replace(',', '.')), 0, 100)
+  // ----------- entregas por tarefa -----------
+  async function toggleEntregas(tarefaId) {
+    if (!tarefaId) return
+    if (expandedTarefaId === tarefaId) {
+      setExpandedTarefaId(null)
+      setEntregas([])
+      return
+    }
+    setExpandedTarefaId(tarefaId)
+    setLoadingEntregas(true)
+    try {
+      const data = await apiJson(`/tarefas/${tarefaId}/entregas`)
+      setEntregas(Array.isArray(data) ? data : [])
+    } catch (e) {
+      setEntregas([])
+      showToast('error', showErr(e))
+    } finally {
+      setLoadingEntregas(false)
+    }
+  }
 
-    if (Number.isNaN(n) || Number.isNaN(f)) {
-      showToast('error', 'Informe nota e frequência válidas.')
+  // ----------- criar prova/tarefa (P1/P2/P3, T1/T2/T3) -----------
+  async function criarTarefa() {
+    if (!selected?.turmaDisciplinaId) return
+
+    const nNumero = clamp(Number(numero), 1, 3)
+
+    if (!titulo.trim()) {
+      showToast('error', 'Título é obrigatório.')
+      return
+    }
+    if (!dataEntrega) {
+      showToast('error', 'Data de entrega é obrigatória.')
       return
     }
 
-    const existing = avaliacoesByAluno[modalAluno.alunoId]
-
     try {
-      setSaving(true)
-
-      if (existing?.id && allowUpdate) {
-        await apiJson(`/avaliacoes/${existing.id}`, 'DELETE')
-      }
-
-      const payload = {
-        alunoId: modalAluno.alunoId,
+      setCreating(true)
+      await apiJson('/tarefas', 'POST', {
         turmaDisciplinaId: selected.turmaDisciplinaId,
-        nota: n,
-        frequencia: f,
-      }
-
-      const created = await apiJson('/avaliacoes', 'POST', payload)
-
-      setAvaliacoesByAluno((prev) => ({
-        ...prev,
-        [modalAluno.alunoId]: {
-          id: created?.id ?? existing?.id ?? 0,
-          nota: n,
-          frequencia: f,
-          situacao: calcSituacao(n, f),
-        },
-      }))
-
-      showToast('success', 'Avaliação salva com sucesso.')
-      closeModal()
-    } catch (e) {
-      const msg =
-        e?.payload?.message ||
-        (e?.status === 409
-          ? 'Já existe avaliação para este aluno nessa disciplina.'
-          : 'Erro ao salvar avaliação.')
-      showToast('error', msg)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function excluirAvaliacao() {
-    if (!modalAluno) return
-    const existing = avaliacoesByAluno[modalAluno.alunoId]
-    if (!existing?.id) return
-
-    try {
-      setSaving(true)
-      await apiJson(`/avaliacoes/${existing.id}`, 'DELETE')
-
-      setAvaliacoesByAluno((prev) => {
-        const copy = { ...prev }
-        delete copy[modalAluno.alunoId]
-        return copy
+        tipo,
+        numero: nNumero,
+        titulo: titulo.trim(),
+        descricao: descricao?.trim() || null,
+        dataEntrega,
       })
 
-      showToast('success', 'Avaliação removida.')
-      closeModal()
-    } catch {
-      showToast('error', 'Erro ao remover avaliação.')
+      showToast('success', 'Atividade criada. Agora envie o PDF do enunciado para publicar.')
+      setTitulo('')
+      setDescricao('')
+      setDataEntrega('')
+      await refreshTarefas()
+    } catch (e) {
+      showToast('error', showErr(e))
     } finally {
-      setSaving(false)
+      setCreating(false)
     }
   }
 
-  function exportarCsv() {
-    if (!selected) return
+  // ----------- upload enunciado PDF (publica a atividade) -----------
+  async function uploadEnunciado(tarefaId, file) {
+    if (!tarefaId || !file) return
 
-    const header = ['Turma', 'Disciplina', 'Aluno', 'RA', 'Email', 'Nota', 'Frequência', 'Situação']
+    if (file.type !== 'application/pdf') {
+      showToast('error', 'Somente PDF é permitido.')
+      return
+    }
 
-    const body = alunos.map((a) => {
-      const av = avaliacoesByAluno[a.alunoId]
-      return [
-        selected.turmaNome,
-        selected.disciplinaNome,
-        a.nome,
-        a.ra,
-        a.email,
-        av ? av.nota : '',
-        av ? av.frequencia : '',
-        av ? av.situacao : 'Pendente',
-      ]
-    })
+    const fd = new FormData()
+    fd.append('arquivo', file)
 
-    downloadCsv(
-      `educonnect_${selected.turmaCodigo}_${selected.disciplinaNome.replace(/\s+/g, '_')}.csv`,
-      [header, ...body]
-    )
+    try {
+      setUploadingEnunciadoId(tarefaId)
+      const token = localStorage.getItem('token')
+      const resp = await fetch(`${BASE_URL}/tarefas/${tarefaId}/enunciado`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      })
 
-    showToast('success', 'CSV exportado.')
+      if (!resp.ok) {
+        let payload = null
+        try { payload = await resp.json() } catch {}
+        throw { status: resp.status, payload }
+      }
+
+      showToast('success', 'Enunciado enviado. Atividade publicada!')
+      await refreshTarefas()
+    } catch (e) {
+      showToast('error', showErr(e))
+    } finally {
+      setUploadingEnunciadoId(null)
+    }
   }
 
-  const previewSituacao = useMemo(() => {
-    const n = clamp(Number(String(nota).replace(',', '.')), 0, 10)
+  // ----------- corrigir entrega -----------
+  function openCorrigir(entrega) {
+    setModalEntrega(entrega)
+    setNotaEntrega(entrega?.nota != null ? String(entrega.nota) : '')
+    setFeedbackEntrega(entrega?.feedbackProfessor || '')
+    setModalEntregaOpen(true)
+  }
+
+  function closeCorrigir() {
+    setModalEntregaOpen(false)
+    setModalEntrega(null)
+    setNotaEntrega('')
+    setFeedbackEntrega('')
+  }
+
+  async function salvarCorrecao() {
+    if (!modalEntrega?.id) return
+
+    const n = clamp(Number(String(notaEntrega).replace(',', '.')), 0, 10)
+    if (Number.isNaN(n)) {
+      showToast('error', 'Nota inválida.')
+      return
+    }
+
+    try {
+      setSavingEntrega(true)
+      await apiJson(`/entregas/${modalEntrega.id}/avaliar`, 'PUT', {
+        nota: n,
+        feedbackProfessor: feedbackEntrega?.trim() || null,
+      })
+      showToast('success', 'Entrega corrigida.')
+      closeCorrigir()
+      if (expandedTarefaId) {
+        await toggleEntregas(expandedTarefaId) // fecha
+        await toggleEntregas(expandedTarefaId) // abre
+      }
+    } catch (e) {
+      showToast('error', showErr(e))
+    } finally {
+      setSavingEntrega(false)
+    }
+  }
+
+  // ----------- fechar boletim (por aluno + td) -----------
+  function openFechar(aluno) {
+    setModalAluno(aluno)
+    setFreq('')
+    setResultadoFechamento(null)
+    setModalFecharOpen(true)
+  }
+
+  function closeFechar() {
+    setModalFecharOpen(false)
+    setModalAluno(null)
+    setFreq('')
+    setResultadoFechamento(null)
+  }
+
+  async function fecharBoletim() {
+    if (!modalAluno?.alunoId || !selected?.turmaDisciplinaId) return
     const f = clamp(Number(String(freq).replace(',', '.')), 0, 100)
-    if (String(nota).trim() === '' || String(freq).trim() === '') return '—'
-    if (Number.isNaN(n) || Number.isNaN(f)) return '—'
-    return calcSituacao(n, f)
-  }, [nota, freq])
+    if (Number.isNaN(f)) {
+      showToast('error', 'Frequência inválida.')
+      return
+    }
+
+    try {
+      setClosing(true)
+      const resp = await apiJson('/avaliacoes/fechar', 'POST', {
+        alunoId: modalAluno.alunoId,
+        turmaDisciplinaId: selected.turmaDisciplinaId,
+        frequencia: f,
+      })
+      setResultadoFechamento(resp || null)
+      showToast('success', 'Boletim fechado/calculado.')
+      await refreshRanking()
+    } catch (e) {
+      showToast('error', showErr(e))
+    } finally {
+      setClosing(false)
+    }
+  }
+
+  // ----------- UI derivadas -----------
+  const tarefasOrdenadas = useMemo(() => {
+    const list = Array.isArray(tarefas) ? [...tarefas] : []
+    return list.sort((a, b) => {
+      const ta = (a.tipo || '').toLowerCase()
+      const tb = (b.tipo || '').toLowerCase()
+      const wa = ta === 'avaliacao' ? 0 : 1
+      const wb = tb === 'avaliacao' ? 0 : 1
+      if (wa !== wb) return wa - wb
+      return Number(a.numero || 0) - Number(b.numero || 0)
+    })
+  }, [tarefas])
 
   return (
     <div className="dashboard-shell">
@@ -494,12 +464,11 @@ export default function PainelProfessor() {
         </div>
       )}
 
-      {/* MAIN (sem header duplicado) */}
       <main className="dashboard-main">
         <div style={{ marginBottom: 14 }}>
           <h1 className="dashboard-title" style={{ marginBottom: 6 }}>Painel do professor</h1>
           <p className="dashboard-subtitle">
-            Lançamento rápido de avaliações, métricas automáticas e exportação de planilha.
+            Provas/Tarefas por <strong>Tipo + Número</strong> com PDF obrigatório (enunciado e resposta).
           </p>
         </div>
 
@@ -510,7 +479,7 @@ export default function PainelProfessor() {
               <h2 className="panel-title">{me?.nome || 'Professor'}</h2>
 
               <p className="panel-subtitle" style={{ marginTop: 4 }}>
-                {loadingTurmas ? 'Carregando suas turmas...' : selected ? (
+                {loadingTD ? 'Carregando suas turmas...' : selected ? (
                   <>
                     <strong>{selected.disciplinaNome}</strong> · {selected.turmaNome} ({selected.turmaCodigo})
                   </>
@@ -519,73 +488,95 @@ export default function PainelProfessor() {
                 )}
               </p>
 
-              <div className="disciplina-row">
-                <label className="teacher-label">Turma/Disciplina:</label>
-                <select
-                  className="disciplina-select"
-                  value={selectedTdId ?? ''}
-                  onChange={(e) => setSelectedTdId(Number(e.target.value))}
-                  disabled={loadingTurmas || turmasDisciplinas.length === 0}
-                >
-                  {turmasDisciplinas.map((td) => (
-                    <option key={td.turmaDisciplinaId} value={td.turmaDisciplinaId}>
-                      {td.turmaNome} · {td.disciplinaNome}
-                    </option>
-                  ))}
-                </select>
+              <div className="disciplina-row" style={{ gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 220 }}>
+                  <label className="teacher-label">Turma</label>
+                  <select
+                    className="disciplina-select"
+                    value={selectedTurmaId ?? ''}
+                    onChange={(e) => setSelectedTurmaId(Number(e.target.value))}
+                    disabled={loadingTD || turmas.length === 0}
+                  >
+                    {turmas.map((t) => (
+                      <option key={t.turmaId} value={t.turmaId}>
+                        {t.turmaNome} ({t.turmaCodigo})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ minWidth: 260 }}>
+                  <label className="teacher-label">Disciplina</label>
+                  <select
+                    className="disciplina-select"
+                    value={selectedTdId ?? ''}
+                    onChange={(e) => setSelectedTdId(Number(e.target.value))}
+                    disabled={loadingTD || disciplinasDaTurma.length === 0}
+                  >
+                    {disciplinasDaTurma.map((td) => (
+                      <option key={td.turmaDisciplinaId} value={td.turmaDisciplinaId}>
+                        {td.disciplinaNome}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={exportarCsv}
-                  disabled={!selected || alunos.length === 0}
-                  style={{ marginLeft: 10 }}
+                  onClick={() => {
+                    refreshTarefas()
+                    refreshRanking()
+                  }}
+                  disabled={!selected?.turmaDisciplinaId}
+                  style={{ height: 42, alignSelf: 'end' }}
                 >
-                  Exportar CSV
+                  Atualizar
                 </button>
-              </div>
-
-              <div className="summary-grid" style={{ marginTop: 12 }}>
-                <div className="summary-card">
-                  <p className="summary-label">Alunos</p>
-                  <p className="summary-value">{stats.total}</p>
-                </div>
-
-                <div className="summary-card">
-                  <p className="summary-label">Avaliados</p>
-                  <p className="summary-value">{stats.avaliados}</p>
-                </div>
-
-                <div className="summary-card">
-                  <p className="summary-label">Pendentes</p>
-                  <p className="summary-value">{stats.pendentes}</p>
-                </div>
-
-                <div className="summary-card">
-                  <p className="summary-label">Média nota</p>
-                  <p className="summary-value">{stats.avaliados ? stats.mediaNota.toFixed(1) : '—'}</p>
-                </div>
-
-                <div className="summary-card">
-                  <p className="summary-label">Média freq.</p>
-                  <p className="summary-value">{stats.avaliados ? `${stats.mediaFreq.toFixed(0)}%` : '—'}</p>
-                </div>
-
-                <div className="summary-card">
-                  <p className="summary-label">Alertas</p>
-                  <p className="summary-value">{stats.alertas}</p>
-                </div>
               </div>
             </div>
 
+            {/* CRIAR ATIVIDADE */}
             <div className="teacher-card">
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                <div style={{ flex: 1, minWidth: 240 }}>
-                  <label className="teacher-label">Buscar aluno</label>
+              <h3 className="panel-title">Criar atividade (Prova/Tarefa)</h3>
+              <p className="panel-subtitle" style={{ marginTop: 4 }}>
+                Peso e nota máxima são fixos: <strong>nota 0–10</strong> e cálculo <strong>70/30</strong> no fechamento.
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '180px 180px 1fr', gap: 10, marginTop: 10 }}>
+                <div>
+                  <label className="teacher-label">Tipo</label>
+                  <select
+                    className="disciplina-select"
+                    value={tipo}
+                    onChange={(e) => setTipo(e.target.value)}
+                    disabled={!selected?.turmaDisciplinaId || creating}
+                  >
+                    <option value="Avaliacao">Prova</option>
+                    <option value="Tarefa">Tarefa</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="teacher-label">Número</label>
+                  <select
+                    className="disciplina-select"
+                    value={numero}
+                    onChange={(e) => setNumero(Number(e.target.value))}
+                    disabled={!selected?.turmaDisciplinaId || creating}
+                  >
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                    <option value={3}>3</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="teacher-label">Título</label>
                   <input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Nome, RA ou e-mail..."
+                    value={titulo}
+                    onChange={(e) => setTitulo(e.target.value)}
+                    placeholder="Ex: Prova Python - P1"
                     style={{
                       width: '100%',
                       marginTop: 6,
@@ -596,14 +587,38 @@ export default function PainelProfessor() {
                       color: theme === 'dark' ? '#f8fafc' : '#111827',
                       outline: 'none',
                     }}
+                    disabled={!selected?.turmaDisciplinaId || creating}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: 10, marginTop: 10 }}>
+                <div>
+                  <label className="teacher-label">Descrição (opcional)</label>
+                  <input
+                    value={descricao}
+                    onChange={(e) => setDescricao(e.target.value)}
+                    placeholder="Instruções rápidas..."
+                    style={{
+                      width: '100%',
+                      marginTop: 6,
+                      padding: '10px 12px',
+                      borderRadius: 12,
+                      border: '1px solid rgba(148,163,184,0.25)',
+                      background: theme === 'dark' ? 'rgba(2,6,23,0.4)' : '#fff',
+                      color: theme === 'dark' ? '#f8fafc' : '#111827',
+                      outline: 'none',
+                    }}
+                    disabled={!selected?.turmaDisciplinaId || creating}
                   />
                 </div>
 
-                <div style={{ width: 220 }}>
-                  <label className="teacher-label">Filtro</label>
-                  <select
-                    value={filtro}
-                    onChange={(e) => setFiltro(e.target.value)}
+                <div>
+                  <label className="teacher-label">Data entrega</label>
+                  <input
+                    type="datetime-local"
+                    value={dataEntrega}
+                    onChange={(e) => setDataEntrega(e.target.value)}
                     style={{
                       width: '100%',
                       marginTop: 6,
@@ -614,124 +629,279 @@ export default function PainelProfessor() {
                       color: theme === 'dark' ? '#f8fafc' : '#111827',
                       outline: 'none',
                     }}
-                  >
-                    <option value="todos">Todos</option>
-                    <option value="pendente">Pendentes</option>
-                    <option value="aprovado">Aprovados</option>
-                    <option value="recuperacao">Recuperação</option>
-                    <option value="reprovado">Reprovados</option>
-                  </select>
+                    disabled={!selected?.turmaDisciplinaId || creating}
+                  />
                 </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={criarTarefa}
+                  disabled={!selected?.turmaDisciplinaId || creating}
+                >
+                  {creating ? 'Criando...' : 'Criar'}
+                </button>
               </div>
             </div>
 
+            {/* LISTA DE ATIVIDADES */}
             <div className="teacher-card">
-              <h3 className="panel-title">Alunos</h3>
+              <h3 className="panel-title">Atividades da disciplina</h3>
               <p className="panel-subtitle" style={{ marginTop: 4 }}>
-                {loadingAlunos
-                  ? 'Carregando alunos...'
-                  : loadingStatus
-                  ? 'Atualizando status de avaliações...'
-                  : 'Clique em “Avaliar” para lançar nota e frequência.'}
+                Envie o <strong>PDF do enunciado</strong> para publicar. Depois acompanhe entregas e corrija.
               </p>
 
-              <table className="list-table" style={{ marginTop: 10 }}>
-                <thead>
-                  <tr>
-                    <th>Aluno</th>
-                    <th>RA</th>
-                    <th>Nota</th>
-                    <th>Freq.</th>
-                    <th>Situação</th>
-                    <th style={{ width: 120 }}>Ação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.length === 0 ? (
+              {loadingTarefas ? (
+                <p className="panel-subtitle">Carregando...</p>
+              ) : tarefasOrdenadas.length === 0 ? (
+                <p className="panel-subtitle">Nenhuma atividade criada ainda.</p>
+              ) : (
+                <table className="list-table" style={{ marginTop: 10 }}>
+                  <thead>
                     <tr>
-                      <td colSpan="6" style={{ opacity: 0.8 }}>
-                        Nenhum aluno encontrado.
-                      </td>
+                      <th style={{ width: 120 }}>Código</th>
+                      <th>Título</th>
+                      <th>Entrega</th>
+                      <th style={{ width: 170 }}>Status</th>
+                      <th style={{ width: 210 }}>Ações</th>
                     </tr>
-                  ) : (
-                    rows.map((a) => {
-                      const av = avaliacoesByAluno[a.alunoId]
-                      const situacao = av?.situacao || 'Pendente'
-
+                  </thead>
+                  <tbody>
+                    {tarefasOrdenadas.map((t) => {
+                      const code = `${labelNumero(t.tipo, t.numero)} · ${labelTipo(t.tipo)}`
+                      const publicado = !!t.enunciadoUrl
                       return (
-                        <tr key={a.alunoId}>
-                          <td>{a.nome}</td>
-                          <td>{a.ra}</td>
-                          <td>{av ? Number(av.nota).toFixed(1) : '—'}</td>
-                          <td>{av ? `${Number(av.frequencia).toFixed(0)}%` : '—'}</td>
-                          <td>{situacao}</td>
+                        <tr key={t.id}>
+                          <td>{code}</td>
                           <td>
-                            <button type="button" className="btn-secondary" onClick={() => openModal(a)}>
-                              Avaliar
-                            </button>
+                            <strong>{t.titulo}</strong>
+                            <div style={{ opacity: 0.85, marginTop: 2 }}>
+                              {t.descricao || '—'}
+                            </div>
+                          </td>
+                          <td>{t.dataEntrega ? new Date(t.dataEntrega).toLocaleString('pt-BR') : '—'}</td>
+                          <td>{publicado ? 'Publicado' : 'Aguardando PDF'}</td>
+                          <td>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                              {t.enunciadoUrl ? (
+                                <a className="btn-secondary" href={absUrl(t.enunciadoUrl)} target="_blank" rel="noreferrer">
+                                  Ver enunciado
+                                </a>
+                              ) : null}
+
+                              <label className="btn-secondary" style={{ cursor: uploadingEnunciadoId === t.id ? 'not-allowed' : 'pointer' }}>
+                                {uploadingEnunciadoId === t.id ? 'Enviando...' : (publicado ? 'Trocar PDF' : 'Enviar PDF')}
+                                <input
+                                  type="file"
+                                  accept="application/pdf"
+                                  style={{ display: 'none' }}
+                                  disabled={uploadingEnunciadoId === t.id}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0]
+                                    e.target.value = ''
+                                    if (file) uploadEnunciado(t.id, file)
+                                  }}
+                                />
+                              </label>
+
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => toggleEntregas(t.id)}
+                              >
+                                {expandedTarefaId === t.id ? 'Fechar entregas' : 'Ver entregas'}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       )
-                    })
+                    })}
+                  </tbody>
+                </table>
+              )}
+
+              {/* ENTREGAS EXPANDIDAS */}
+              {expandedTarefaId && (
+                <div style={{ marginTop: 14 }}>
+                  <h4 style={{ margin: 0 }}>Entregas</h4>
+                  <p className="panel-subtitle" style={{ marginTop: 4 }}>
+                    {loadingEntregas ? 'Carregando...' : 'Clique em “Corrigir” para lançar nota e feedback.'}
+                  </p>
+
+                  {!loadingEntregas && entregas.length === 0 ? (
+                    <p className="panel-subtitle">Sem entregas ainda.</p>
+                  ) : (
+                    <table className="list-table" style={{ marginTop: 10 }}>
+                      <thead>
+                        <tr>
+                          <th>Aluno</th>
+                          <th style={{ width: 120 }}>Status</th>
+                          <th style={{ width: 120 }}>Nota</th>
+                          <th style={{ width: 220 }}>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {entregas.map((e) => {
+                          const hasNota = e.nota != null
+                          const alunoLabel = e.alunoNome || e.nomeAluno || e.aluno?.nome || `Aluno #${e.alunoId}`
+                          const arquivoUrl = e.arquivoUrl || e.arquivoPath || e.arquivoUrlPublica || null
+                          return (
+                            <tr key={e.id}>
+                              <td>
+                                <strong>{alunoLabel}</strong>
+                                <div style={{ opacity: 0.85, marginTop: 2 }}>
+                                  Enviado em: {formatDateLocal(e.enviadoEm || e.criadoEm || e.createdAt)}
+                                </div>
+                              </td>
+                              <td>{hasNota ? 'Corrigido' : 'Pendente'}</td>
+                              <td>{hasNota ? Number(e.nota).toFixed(2) : '—'}</td>
+                              <td>
+                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                  {arquivoUrl ? (
+                                    <a className="btn-secondary" href={absUrl(arquivoUrl)} target="_blank" rel="noreferrer">
+                                      Ver PDF
+                                    </a>
+                                  ) : (
+                                    <span style={{ opacity: 0.8 }}>Sem arquivo</span>
+                                  )}
+
+                                  <button type="button" className="btn-primary" onClick={() => openCorrigir(e)}>
+                                    Corrigir
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
                   )}
-                </tbody>
-              </table>
+                </div>
+              )}
+            </div>
+
+            {/* FECHAR BOLETIM */}
+            <div className="teacher-card">
+              <h3 className="panel-title">Fechar boletim (por aluno)</h3>
+              <p className="panel-subtitle" style={{ marginTop: 4 }}>
+                Antes de gerar deve definir a <strong>frequência</strong> do aluno. O sistema valida completude e aplica a regra automaticamente.
+              </p>
+
+              {loadingAlunos ? (
+                <p className="panel-subtitle">Carregando alunos...</p>
+              ) : alunos.length === 0 ? (
+                <p className="panel-subtitle">Sem alunos (ou você não tem turma selecionada).</p>
+              ) : (
+                <table className="list-table" style={{ marginTop: 10 }}>
+                  <thead>
+                    <tr>
+                      <th>Aluno</th>
+                      <th>RA</th>
+                      <th style={{ width: 180 }}>Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {alunos.map((a) => (
+                      <tr key={a.alunoId}>
+                        <td>{a.nome}</td>
+                        <td>{a.ra}</td>
+                        <td>
+                          <button type="button" className="btn-secondary" onClick={() => openFechar(a)}>
+                            Gerar Boletim
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
 
           {/* COLUNA DIREITA */}
           <aside className="teacher-aside">
+            {/* Regra fixa */}
             <div className="teacher-card">
-              <h3 className="panel-title">Top 10 por nota</h3>
-              <p className="panel-subtitle" style={{ marginTop: 4 }}>
-                Mostra os melhores desempenhos na disciplina selecionada.
+              <h3 className="panel-title">Regra de negócio fixa</h3>
+              <p className="panel-subtitle" style={{ marginTop: 6, opacity: 0.9 }}>
+                O professor apenas cria/corrige atividades e informa frequência no fechamento.
               </p>
-              <div className="chart-wrapper" style={{ marginTop: 8 }}>
-                <Bar data={chartData} options={chartOptions} />
+
+              <div style={{ marginTop: 10, opacity: 0.9 }}>
+                <ul style={{ marginTop: 6, paddingLeft: 18 }}>
+                  <li><strong>2 provas</strong>: P1 e P2</li>
+                  <li><strong>3 tarefas</strong>: T1, T2 e T3</li>
+                  <li><strong>Recuperação</strong>: P3 (somente se média &lt; 6)</li>
+                  <li><strong>Peso</strong>: Provas 70% + Tarefas 30%</li>
+                  <li><strong>Frequência mínima</strong>: 75%</li>
+                  <li><strong>Aprovação</strong>: média final ≥ 6</li>
+                </ul>
               </div>
             </div>
 
+            {/* Ranking */}
             <div className="teacher-card">
-              <h3 className="panel-title">Próximos eventos</h3>
-              {eventos.length === 0 ? (
-                <p className="panel-subtitle">Sem eventos (ou endpoint não configurado).</p>
-              ) : (
-                <ul className="student-notifications">
-                  {eventos.slice(0, 5).map((ev) => (
-                    <li key={ev.id}>
-                      <strong>{ev.titulo}</strong>
-                      <div style={{ opacity: 0.9 }}>
-                        {formatUtc(ev.inicioUtc)} – {formatUtc(ev.fimUtc)}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                <h3 className="panel-title" style={{ margin: 0 }}>Top (turma)</h3>
+                <button type="button" className="btn-secondary" onClick={() => refreshRanking()} disabled={!selected?.turmaId || loadingRanking}>
+                  {loadingRanking ? '...' : 'Atualizar'}
+                </button>
+              </div>
 
-            <div className="teacher-card">
-              <h3 className="panel-title">Notificações</h3>
-              {notifs.length === 0 ? (
-                <p className="panel-subtitle">Sem notificações (ou endpoint não configurado).</p>
+              <p className="panel-subtitle" style={{ marginTop: 6 }}>
+                Visual rápido das melhores <strong>médias</strong> já fechadas (referência para você acompanhar evolução).
+              </p>
+
+              {loadingRanking ? (
+                <p className="panel-subtitle">Carregando ranking...</p>
+              ) : ranking.length === 0 ? (
+                <p className="panel-subtitle">Sem dados ainda. Feche alguns boletins pra aparecer aqui.</p>
               ) : (
-                <ul className="student-notifications">
-                  {notifs.slice(0, 5).map((n) => (
-                    <li key={n.id}>
-                      <strong>{n.titulo}</strong>
-                      <div style={{ opacity: 0.9 }}>{n.mensagem}</div>
-                    </li>
+                <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
+                  {ranking.map((r, idx) => (
+                    <div
+                      key={`${r.disciplinaId ?? idx}-${idx}`}
+                      style={{
+                        padding: 12,
+                        borderRadius: 14,
+                        border: '1px solid rgba(148,163,184,0.25)',
+                        background: theme === 'dark' ? 'rgba(2,6,23,0.35)' : 'rgba(255,255,255,0.7)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
+                        <strong style={{ fontSize: 13, opacity: 0.95 }}>{r.disciplinaNome || 'Disciplina'}</strong>
+                        <span style={{ fontWeight: 700 }}>{Number(r.mediaNota ?? 0).toFixed(1)}</span>
+                      </div>
+                      <div style={{ marginTop: 6, opacity: 0.8, fontSize: 12 }}>
+                        Total de registros: {r.total ?? '—'}
+                      </div>
+
+                      {/* barzinha */}
+                      <div style={{ marginTop: 10, height: 8, borderRadius: 999, background: theme === 'dark' ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.25)' }}>
+                        <div
+                          style={{
+                            width: `${clamp((Number(r.mediaNota ?? 0) / 10) * 100, 0, 100)}%`,
+                            height: 8,
+                            borderRadius: 999,
+                            background: 'rgba(239,68,68,0.85)',
+                          }}
+                        />
+                      </div>
+                    </div>
                   ))}
-                </ul>
+                </div>
               )}
             </div>
           </aside>
         </section>
       </main>
 
-      {/* MODAL */}
-      {modalOpen && modalAluno && (
+      {/* MODAL CORRIGIR */}
+      {modalEntregaOpen && modalEntrega && (
         <div
-          onClick={closeModal}
+          onClick={closeCorrigir}
           style={{
             position: 'fixed',
             inset: 0,
@@ -756,26 +926,23 @@ export default function PainelProfessor() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
               <div>
-                <h3 style={{ margin: 0 }}>Avaliação</h3>
+                <h3 style={{ margin: 0 }}>Corrigir entrega</h3>
                 <div style={{ opacity: 0.85, marginTop: 4 }}>
-                  <strong>{modalAluno.nome}</strong> · RA {modalAluno.ra}
-                </div>
-                <div style={{ opacity: 0.8, marginTop: 4 }}>
-                  {selected?.turmaNome} · {selected?.disciplinaNome}
+                  ID: {modalEntrega.id}
                 </div>
               </div>
 
-              <button type="button" className="btn-secondary" onClick={closeModal} disabled={saving}>
+              <button type="button" className="btn-secondary" onClick={closeCorrigir} disabled={savingEntrega}>
                 Fechar
               </button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginTop: 14 }}>
               <div>
                 <label className="teacher-label">Nota (0 a 10)</label>
                 <input
-                  value={nota}
-                  onChange={(e) => setNota(e.target.value)}
+                  value={notaEntrega}
+                  onChange={(e) => setNotaEntrega(e.target.value)}
                   placeholder="Ex: 8.5"
                   style={{
                     width: '100%',
@@ -787,16 +954,16 @@ export default function PainelProfessor() {
                     color: theme === 'dark' ? '#f8fafc' : '#111827',
                     outline: 'none',
                   }}
-                  disabled={saving}
+                  disabled={savingEntrega}
                 />
               </div>
 
               <div>
-                <label className="teacher-label">Frequência (0 a 100)</label>
+                <label className="teacher-label">Feedback (opcional)</label>
                 <input
-                  value={freq}
-                  onChange={(e) => setFreq(e.target.value)}
-                  placeholder="Ex: 92"
+                  value={feedbackEntrega}
+                  onChange={(e) => setFeedbackEntrega(e.target.value)}
+                  placeholder="Comentário para o aluno..."
                   style={{
                     width: '100%',
                     marginTop: 6,
@@ -807,29 +974,96 @@ export default function PainelProfessor() {
                     color: theme === 'dark' ? '#f8fafc' : '#111827',
                     outline: 'none',
                   }}
-                  disabled={saving}
+                  disabled={savingEntrega}
                 />
               </div>
             </div>
 
-            <div style={{ marginTop: 10, opacity: 0.9 }}>
-              <span style={{ fontWeight: 600 }}>Prévia:</span> {previewSituacao}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
+              <button type="button" className="btn-primary" onClick={salvarCorrecao} disabled={savingEntrega}>
+                {savingEntrega ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL FECHAR BOLETIM */}
+      {modalFecharOpen && modalAluno && (
+        <div
+          onClick={closeFechar}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(2,6,23,0.55)',
+            zIndex: 9998,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(760px, 100%)',
+              borderRadius: 18,
+              background: theme === 'dark' ? 'rgba(2,6,23,0.92)' : '#fff',
+              border: '1px solid rgba(148,163,184,0.2)',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+              padding: 16,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <div>
+                <h3 style={{ margin: 0 }}></h3>
+                <div style={{ opacity: 0.85, marginTop: 4 }}>
+                  <strong>{modalAluno.nome}</strong> · RA {modalAluno.ra}
+                </div>
+                <div style={{ opacity: 0.8, marginTop: 4 }}>
+                  {selected?.turmaNome} · {selected?.disciplinaNome}
+                </div>
+              </div>
+
+              <button type="button" className="btn-secondary" onClick={closeFechar} disabled={closing}>
+                Fechar
+              </button>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
-              {avaliacoesByAluno[modalAluno.alunoId]?.id ? (
-                <button type="button" className="btn-secondary" onClick={excluirAvaliacao} disabled={saving}>
-                  Excluir
-                </button>
-              ) : null}
+            <div style={{ marginTop: 14 }}>
+              <label className="teacher-label">Frequência do aluno (0 a 100)</label>
+              <input
+                value={freq}
+                onChange={(e) => setFreq(e.target.value)}
+                placeholder="Ex: 92"
+                style={{
+                  width: '100%',
+                  marginTop: 6,
+                  padding: '10px 12px',
+                  borderRadius: 12,
+                  border: '1px solid rgba(148,163,184,0.25)',
+                  background: theme === 'dark' ? 'rgba(2,6,23,0.4)' : '#fff',
+                  color: theme === 'dark' ? '#f8fafc' : '#111827',
+                  outline: 'none',
+                }}
+                disabled={closing}
+              />
+            </div>
 
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => salvarAvaliacao({ allowUpdate: true })}
-                disabled={saving}
-              >
-                {saving ? 'Salvando...' : 'Salvar'}
+            {resultadoFechamento && (
+              <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: '1px solid rgba(148,163,184,0.25)' }}>
+                <div><strong>Situação:</strong> {resultadoFechamento.situacao}</div>
+                <div style={{ marginTop: 6, opacity: 0.9 }}>
+                  <div>P1: {resultadoFechamento.p1 ?? '—'} | P2: {resultadoFechamento.p2 ?? '—'} | P3: {resultadoFechamento.p3 ?? '—'}</div>
+                  <div>T1: {resultadoFechamento.t1 ?? '—'} | T2: {resultadoFechamento.t2 ?? '—'} | T3: {resultadoFechamento.t3 ?? '—'}</div>
+                  <div>Média final: {resultadoFechamento.mediaFinal ?? '—'} | Pós-rec: {resultadoFechamento.mediaPosRec ?? '—'}</div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
+              <button type="button" className="btn-primary" onClick={fecharBoletim} disabled={closing}>
+                {closing ? 'Processando...' : 'Gerar Boletim'}
               </button>
             </div>
           </div>
