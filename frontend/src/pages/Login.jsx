@@ -30,8 +30,8 @@ export default function Login() {
 
       const role = (resp?.role || '').toLowerCase()
       if (role === 'admin') navigate('/dashboard')
-      else if (role === 'professor') navigate('/painel-professor')
-      else if (role === 'aluno') navigate('/meu-painel')
+      else if (role === 'professor') navigate('/dashboard')
+      else if (role === 'aluno') navigate('/dashboard')
       else navigate('/dashboard')
     } catch (err) {
       const msg =
