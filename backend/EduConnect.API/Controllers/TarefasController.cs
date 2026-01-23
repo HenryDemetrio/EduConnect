@@ -25,7 +25,8 @@ namespace EduConnect.API.Controllers
             var raw =
                 User.FindFirst("id")?.Value ??
                 User.FindFirst(ClaimTypes.NameIdentifier)?.Value ??
-                User.FindFirst("sub")?.Value;
+                User.FindFirst("sub")?.Value ??
+                User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
             return int.TryParse(raw, out var id) ? id : null;
         }
@@ -72,7 +73,6 @@ namespace EduConnect.API.Controllers
         private static bool NumeroValido(string tipo, int numero)
         {
             if (!TipoValido(tipo)) return false;
-            // aqui ambos são 1..3 (P1/P2/P3 e T1/T2/T3)
             return numero is >= 1 and <= 3;
         }
 
@@ -117,14 +117,14 @@ namespace EduConnect.API.Controllers
                 .Include(t => t.TurmaDisciplina)!.ThenInclude(td => td.Disciplina)
                 .Where(t => t.TurmaDisciplinaId == turmaDisciplinaId);
 
-            // ✅ aluno só vê o que está publicado (ativa + com enunciado)
+            // ✅ aluno só vê publicado (ativa + com enunciado)
             if (User.IsInRole("Aluno"))
             {
                 query = query.Where(t => t.Ativa && t.EnunciadoArquivoPath != null);
             }
 
             var lista = await query
-                .OrderBy(t => t.Tipo) // Avaliacao/Tarefa
+                .OrderBy(t => t.Tipo)
                 .ThenBy(t => t.Numero)
                 .ThenBy(t => t.DataEntrega)
                 .Select(t => new TarefaResponse
@@ -132,7 +132,7 @@ namespace EduConnect.API.Controllers
                     Id = t.Id,
                     TurmaDisciplinaId = t.TurmaDisciplinaId,
                     Tipo = t.Tipo,
-                    Numero = t.Numero, // ✅ novo DTO
+                    Numero = t.Numero,
                     Titulo = t.Titulo,
                     Descricao = t.Descricao,
                     DataEntrega = t.DataEntrega,
@@ -140,8 +140,6 @@ namespace EduConnect.API.Controllers
                     NotaMaxima = t.NotaMaxima,
                     CriadaEm = t.CriadaEm,
                     Ativa = t.Ativa,
-
-                    // ✅ novo DTO
                     EnunciadoUrl = t.EnunciadoArquivoPath,
 
                     TurmaId = t.TurmaDisciplina!.TurmaId,
@@ -154,9 +152,45 @@ namespace EduConnect.API.Controllers
         }
 
         // =========================
+        //  ALUNO: MINHA ENTREGA (status/nota/arquivo)
+        //  GET /tarefas/{tarefaId}/minha-entrega
+        // =========================
+        [HttpGet("tarefas/{tarefaId:int}/minha-entrega")]
+        [Authorize(Roles = "Aluno")]
+        public async Task<IActionResult> MinhaEntrega(int tarefaId)
+        {
+            var aluno = await GetAlunoLogado();
+            if (aluno == null) return Forbid();
+
+            var tarefa = await _ctx.Tarefas.AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Id == tarefaId);
+
+            if (tarefa == null) return NotFound(new { message = "Tarefa não encontrada." });
+
+            // segurança: só se aluno é da turma dessa TD
+            var ok = await AlunoMatriculadoNaTurmaDaTurmaDisciplina(aluno.Id, tarefa.TurmaDisciplinaId);
+            if (!ok) return Forbid();
+
+            var entrega = await _ctx.EntregasTarefas.AsNoTracking()
+                .FirstOrDefaultAsync(e => e.TarefaId == tarefaId && e.AlunoId == aluno.Id);
+
+            if (entrega == null) return Ok(null);
+
+            // retorna camelCase garantido (mesmo se config não estiver camelCase)
+            return Ok(new
+            {
+                id = entrega.Id,
+                enviadoEm = entrega.EnviadoEm,
+                nota = entrega.Nota,
+                feedbackProfessor = entrega.FeedbackProfessor,
+                avaliadoEm = entrega.AvaliadoEm,
+                arquivoUrl = entrega.ArquivoPath
+            });
+        }
+
+        // =========================
         //  CRIAR TAREFA
         //  POST /tarefas
-        //  (cria como Ativa=false; publica ao subir enunciado)
         // =========================
         [HttpPost("tarefas")]
         [Authorize(Roles = "Admin,Professor")]
@@ -183,11 +217,9 @@ namespace EduConnect.API.Controllers
             if (!TipoValido(tipo))
                 return BadRequest(new { message = "Tipo inválido (use 'Tarefa' ou 'Avaliacao')." });
 
-            // ✅ Numero obrigatório pra regra P1/P2/P3 e T1/T2/T3
             if (!NumeroValido(tipo, req.Numero))
                 return BadRequest(new { message = "Número é obrigatório e deve ser 1, 2 ou 3." });
 
-            // ✅ impede duplicado TD+Tipo+Numero
             var jaExiste = await _ctx.Tarefas.AnyAsync(t =>
                 t.TurmaDisciplinaId == req.TurmaDisciplinaId &&
                 t.Tipo == tipo &&
@@ -207,9 +239,7 @@ namespace EduConnect.API.Controllers
                 Peso = req.Peso,
                 NotaMaxima = req.NotaMaxima,
                 CriadaEm = DateTime.UtcNow,
-
-                // ✅ só publica quando anexar enunciado
-                Ativa = false
+                Ativa = false // publica quando anexar enunciado
             };
 
             _ctx.Tarefas.Add(tarefa);
@@ -219,13 +249,13 @@ namespace EduConnect.API.Controllers
         }
 
         // =========================
-        //  UPLOAD ENUNCIADO (PDF) - PROF/ADMIN
+        //  UPLOAD ENUNCIADO (PDF)
         //  POST /tarefas/{id}/enunciado
         // =========================
         [HttpPost("tarefas/{id:int}/enunciado")]
         [Authorize(Roles = "Admin,Professor")]
         [Consumes("multipart/form-data")]
-        [RequestSizeLimit(10_000_000)] // 10MB
+        [RequestSizeLimit(10_000_000)]
         public async Task<IActionResult> UploadEnunciado(int id, [FromForm] UploadEnunciadoRequest req)
         {
             var arquivo = req.Arquivo;
@@ -258,7 +288,6 @@ namespace EduConnect.API.Controllers
             t.EnunciadoContentType = string.IsNullOrWhiteSpace(arquivo.ContentType) ? "application/pdf" : arquivo.ContentType;
             t.EnunciadoSizeBytes = arquivo.Length;
 
-            // ✅ publicar
             t.Ativa = true;
 
             await _ctx.SaveChangesAsync();
@@ -267,7 +296,6 @@ namespace EduConnect.API.Controllers
         }
 
         // =========================
-        //  DETALHE TAREFA
         //  GET /tarefas/{id}
         // =========================
         [HttpGet("tarefas/{id:int}")]
@@ -293,7 +321,6 @@ namespace EduConnect.API.Controllers
                 var ok = await AlunoMatriculadoNaTurmaDaTurmaDisciplina(aluno.Id, t.TurmaDisciplinaId);
                 if (!ok) return Forbid();
 
-                // ✅ aluno só acessa se publicado
                 if (!t.Ativa || t.EnunciadoArquivoPath == null)
                     return NotFound(new { message = "Atividade ainda não foi publicada." });
             }
@@ -319,7 +346,50 @@ namespace EduConnect.API.Controllers
         }
 
         // =========================
-        //  EDITAR TAREFA
+        //  PROF/ADMIN: LISTAR ENTREGAS DA TAREFA
+        //  GET /tarefas/{tarefaId}/entregas
+        // =========================
+        [HttpGet("tarefas/{tarefaId:int}/entregas")]
+        [Authorize(Roles = "Admin,Professor")]
+        public async Task<IActionResult> ListarEntregasDaTarefa(int tarefaId)
+        {
+            var tarefa = await _ctx.Tarefas
+                .Include(t => t.TurmaDisciplina)
+                .FirstOrDefaultAsync(t => t.Id == tarefaId);
+
+            if (tarefa == null) return NotFound(new { message = "Tarefa não encontrada." });
+
+            if (User.IsInRole("Professor"))
+            {
+                if (!await ProfessorDonoTurmaDisciplina(tarefa.TurmaDisciplinaId))
+                    return Forbid();
+            }
+
+            var entregas = await _ctx.EntregasTarefas
+                .AsNoTracking()
+                .Include(e => e.Aluno)
+                    .ThenInclude(a => a.Usuario)
+                .Where(e => e.TarefaId == tarefaId)
+                .OrderByDescending(e => e.EnviadoEm)
+                .Select(e => new
+                {
+                    id = e.Id,
+                    alunoId = e.AlunoId,
+                    alunoNome = e.Aluno.Usuario.Nome,
+                    alunoRa = e.Aluno.RA,
+                    enviadoEm = e.EnviadoEm,
+                    nota = e.Nota,
+                    feedbackProfessor = e.FeedbackProfessor,
+                    avaliadoEm = e.AvaliadoEm,
+                    arquivoUrl = e.ArquivoPath
+                })
+                .ToListAsync();
+
+            return Ok(entregas);
+        }
+
+
+        // =========================
         //  PUT /tarefas/{id}
         // =========================
         [HttpPut("tarefas/{id:int}")]
@@ -344,7 +414,6 @@ namespace EduConnect.API.Controllers
             if (!NumeroValido(tipo, req.Numero))
                 return BadRequest(new { message = "Número é obrigatório e deve ser 1, 2 ou 3." });
 
-            // ✅ impede conflito TD+Tipo+Numero com outra tarefa
             var conflita = await _ctx.Tarefas.AnyAsync(x =>
                 x.Id != id &&
                 x.TurmaDisciplinaId == t.TurmaDisciplinaId &&
@@ -357,7 +426,6 @@ namespace EduConnect.API.Controllers
             if (req.Peso <= 0) req.Peso = 1m;
             if (req.NotaMaxima <= 0) req.NotaMaxima = 10m;
 
-            // ✅ se tentar ativar sem enunciado, bloqueia
             if (req.Ativa && string.IsNullOrWhiteSpace(t.EnunciadoArquivoPath))
                 return BadRequest(new { message = "Para publicar, anexe o enunciado (PDF) primeiro." });
 
@@ -375,7 +443,6 @@ namespace EduConnect.API.Controllers
         }
 
         // =========================
-        //  EXCLUIR TAREFA
         //  DELETE /tarefas/{id}
         // =========================
         [HttpDelete("tarefas/{id:int}")]
@@ -402,7 +469,7 @@ namespace EduConnect.API.Controllers
         [HttpPost("tarefas/{tarefaId:int}/entrega")]
         [Authorize(Roles = "Aluno")]
         [Consumes("multipart/form-data")]
-        [RequestSizeLimit(10_000_000)] // 10MB
+        [RequestSizeLimit(10_000_000)]
         public async Task<IActionResult> EnviarEntrega(int tarefaId, [FromForm] EnviarEntregaRequest req)
         {
             var file = req.Arquivo;
@@ -423,7 +490,6 @@ namespace EduConnect.API.Controllers
 
             if (tarefa == null) return NotFound(new { message = "Tarefa não encontrada." });
 
-            // ✅ só pode entregar se publicado
             if (!tarefa.Ativa || string.IsNullOrWhiteSpace(tarefa.EnunciadoArquivoPath))
                 return BadRequest(new { message = "Atividade ainda não foi publicada pelo professor." });
 
@@ -549,7 +615,6 @@ namespace EduConnect.API.Controllers
             var t3 = GetNota("Tarefa", 3);
             var p3 = GetNota("Avaliacao", 3); // recuperação (opcional)
 
-            // só calcula final quando base completa
             if (p1 == null || p2 == null || t1 == null || t2 == null || t3 == null)
                 return (false, "Base incompleta (precisa P1, P2, T1, T2, T3 corrigidos).");
 
@@ -561,7 +626,6 @@ namespace EduConnect.API.Controllers
 
             decimal notaParaGravar = mediaFinal;
 
-            // se tiver recuperação, melhora a nota final gravada (pro dashboard/boletim)
             if (p3 != null)
             {
                 var mediaPosRec = Math.Max(mediaFinal, (mediaFinal + p3.Value) / 2m);
