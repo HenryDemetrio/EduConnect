@@ -12,5 +12,7 @@
 
         public int? ProfessorId { get; set; }
         public string? ProfessorNome { get; set; }
+        public string? TurmaCodigo { get; set; }
+
     }
 }

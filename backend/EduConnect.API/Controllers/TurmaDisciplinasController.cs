@@ -23,12 +23,59 @@ namespace EduConnect.API.Controllers
         private int GetUserIdFromToken()
         {
             var sub = User.FindFirstValue(JwtRegisteredClaimNames.Sub)
-                      ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+                      ?? User.FindFirstValue(ClaimTypes.NameIdentifier)
+                      ?? User.FindFirstValue("sub")
+                      ?? User.FindFirstValue("id");
 
             if (string.IsNullOrWhiteSpace(sub) || !int.TryParse(sub, out var userId))
                 throw new UnauthorizedAccessException("Token inválido (sub).");
 
             return userId;
+        }
+
+        // =========================================================
+        //  GET /turmas/minha/disciplinas  (ALUNO)
+        //  Lista as TurmaDisciplinas da turma do aluno logado
+        // =========================================================
+        [HttpGet("minha/disciplinas")]
+        [Authorize(Roles = "Aluno")]
+        public async Task<IActionResult> ListarDisciplinasMinhaTurma()
+        {
+            var userId = GetUserIdFromToken();
+
+            var aluno = await _ctx.Alunos.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.UsuarioId == userId);
+
+            if (aluno == null) return Forbid();
+
+            // aluno só está em 1 turma -> pega a matrícula mais recente
+            var turmaId = await _ctx.Matriculas.AsNoTracking()
+                .Where(m => m.AlunoId == aluno.Id)
+                .OrderByDescending(m => m.Id)
+                .Select(m => (int?)m.TurmaId)
+                .FirstOrDefaultAsync();
+
+            if (!turmaId.HasValue)
+                return Ok(new List<TurmaDisciplinaResponse>());
+
+            var list = await _ctx.TurmaDisciplinas.AsNoTracking()
+                .Include(td => td.Turma)
+                .Include(td => td.Disciplina)
+                .Where(td => td.TurmaId == turmaId.Value)
+                .Select(td => new TurmaDisciplinaResponse
+                {
+                    Id = td.Id,
+                    TurmaId = td.TurmaId,
+                    TurmaNome = td.Turma.Nome,
+                    TurmaCodigo = td.Turma.Codigo,
+                    DisciplinaId = td.DisciplinaId,
+                    DisciplinaNome = td.Disciplina.Nome,
+                    ProfessorId = td.ProfessorId,
+                    ProfessorNome = null
+                })
+                .ToListAsync();
+
+            return Ok(list);
         }
 
         // POST /turmas/{turmaId}/disciplinas
@@ -79,7 +126,9 @@ namespace EduConnect.API.Controllers
             if (User.IsInRole("Professor"))
             {
                 var userId = GetUserIdFromToken();
-                var professor = await _ctx.Professores.AsNoTracking().FirstOrDefaultAsync(p => p.UsuarioId == userId);
+                var professor = await _ctx.Professores.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.UsuarioId == userId);
+
                 if (professor == null) return Forbid();
 
                 query = query.Where(td => td.ProfessorId == professor.Id);
@@ -91,6 +140,7 @@ namespace EduConnect.API.Controllers
                     Id = td.Id,
                     TurmaId = td.TurmaId,
                     TurmaNome = td.Turma.Nome,
+                    TurmaCodigo = td.Turma.Codigo,
                     DisciplinaId = td.DisciplinaId,
                     DisciplinaNome = td.Disciplina.Nome,
                     ProfessorId = td.ProfessorId,
@@ -125,7 +175,6 @@ namespace EduConnect.API.Controllers
 
             return NoContent();
         }
-
 
         // DELETE /turmas/disciplinas/{id}
         [HttpDelete("disciplinas/{id:int}")]
