@@ -45,6 +45,35 @@ function showErr(e) {
   )
 }
 
+/* nova função agr fznd download */
+async function downloadBoletimPdf(alunoId, fileName = "boletim.pdf") {
+  const token = localStorage.getItem("token")
+
+  const resp = await fetch(`${BASE_URL}/relatorios/boletim/${alunoId}`, {
+    method: "GET",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+
+  if (!resp.ok) {
+    let payload = null
+    try { payload = await resp.json() } catch {}
+    throw { status: resp.status, payload }
+  }
+
+  const blob = await resp.blob()
+  const url = window.URL.createObjectURL(blob)
+
+  const a = document.createElement("a")
+  a.href = url
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+
+  window.URL.revokeObjectURL(url)
+}
+
+
 export default function PainelProfessor() {
   const { theme } = useTheme()
   const { me } = useAuth()
@@ -415,8 +444,13 @@ export default function PainelProfessor() {
         turmaDisciplinaId: selected.turmaDisciplinaId,
         frequencia: f,
       })
+
       setResultadoFechamento(resp || null)
       showToast('success', 'Boletim fechado/calculado.')
+
+      const nome = (modalAluno.nome || "aluno").replaceAll(" ", "_")
+      await downloadBoletimPdf(modalAluno.alunoId, `boletim_${nome}.pdf`)      
+         
       await refreshRanking()
     } catch (e) {
       showToast('error', showErr(e))
