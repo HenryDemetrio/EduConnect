@@ -46,6 +46,36 @@ namespace EduConnect.API.Controllers
             });
         }
 
+
+        [Authorize]
+        [HttpPut("password")]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest req)
+        {
+            if (string.IsNullOrWhiteSpace(req.CurrentPassword) || string.IsNullOrWhiteSpace(req.NewPassword))
+                return BadRequest(new { message = "Informe a senha atual e a nova senha." });
+
+            if (req.NewPassword.Length < 8)
+                return BadRequest(new { message = "A nova senha precisa ter pelo menos 8 caracteres." });
+
+            var sub = User.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                      ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (string.IsNullOrWhiteSpace(sub) || !int.TryParse(sub, out var userId))
+                return Unauthorized(new { message = "Token inválido (sub)." });
+
+            var usuario = await _ctx.Usuarios.FirstOrDefaultAsync(u => u.Id == userId);
+            if (usuario == null) return Unauthorized(new { message = "Usuário não encontrado." });
+
+            var ok = BCrypt.Net.BCrypt.Verify(req.CurrentPassword, usuario.SenhaHash);
+            if (!ok) return BadRequest(new { message = "Senha atual incorreta." });
+
+            usuario.SenhaHash = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
+
+            await _ctx.SaveChangesAsync();
+            return Ok(new { message = "Senha alterada com sucesso." });
+        }
+
+
         // GET /auth/me
         [HttpGet("me")]
         [Authorize]
