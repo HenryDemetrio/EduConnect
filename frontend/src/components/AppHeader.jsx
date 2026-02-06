@@ -18,8 +18,8 @@ function roleLinks(role) {
   if (role === "Professor") {
     return [
       { to: "/dashboard", label: "Dashboard" },
-      { to: "/painel-professor", label: "Painel Professor" },
-      { to: "/professor/agenda", label: "Agenda & Avisos" },
+      { to: "/painel-professor", label: "Painel" },
+      { to: "/professor/agenda", label: "Agenda" },
     ];
   }
 
@@ -36,22 +36,35 @@ export default function AppHeader() {
   const navigate = useNavigate();
 
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // 🔔 notif dropdown
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifLoading, setNotifLoading] = useState(false);
   const [notifs, setNotifs] = useState([]);
+
   const menuRef = useRef(null);
+  const notifRef = useRef(null);
 
   const links = useMemo(() => roleLinks(me?.role), [me?.role]);
 
-  // fecha dropdown clicando fora
+  // fecha dropdowns clicando fora
   useEffect(() => {
     function onDocClick(e) {
-      if (!menuRef.current) return;
-      if (!menuRef.current.contains(e.target)) setMenuOpen(false);
+      const menuEl = menuRef.current;
+      const notifEl = notifRef.current;
+
+      const clickedMenu = menuEl && menuEl.contains(e.target);
+      const clickedNotif = notifEl && notifEl.contains(e.target);
+
+      if (!clickedMenu) setMenuOpen(false);
+      if (!clickedNotif) setNotifOpen(false);
     }
+
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  // badge de notificações (não quebra se endpoint não existir)
+  // carregar notificações (mount)
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -68,10 +81,37 @@ export default function AppHeader() {
     return () => (alive = false);
   }, []);
 
-  const unreadCount = useMemo(() => {
-    // se seu backend tiver "lida: true/false"
-    return notifs.filter(n => n?.lida === false).length;
+  // filtra só notificações DIRETAS (específicas do usuário)
+  const directNotifs = useMemo(() => {
+    const list = Array.isArray(notifs) ? notifs : [];
+    return list.filter((n) => (n?.usuarioId ?? n?.UsuarioId) != null);
   }, [notifs]);
+
+  const unreadCount = useMemo(() => {
+    return directNotifs.filter((n) => (n?.lida ?? n?.Lida) === false).length;
+  }, [directNotifs]);
+
+  async function reloadNotifs() {
+    try {
+      setNotifLoading(true);
+      const data = await apiJson("/notificacoes/me");
+      setNotifs(Array.isArray(data) ? data : []);
+    } catch {
+      setNotifs([]);
+    } finally {
+      setNotifLoading(false);
+    }
+  }
+
+  async function handleToggleNotif() {
+    const next = !notifOpen;
+    setNotifOpen(next);
+
+    // ao abrir, recarrega pra ficar atualizado
+    if (next) {
+      await reloadNotifs();
+    }
+  }
 
   function handleLogout() {
     logout();
@@ -106,16 +146,78 @@ export default function AppHeader() {
           ))}
         </nav>
 
-        {/* Sino */}
-        <button
-          type="button"
-          className="notif-btn"
-          onClick={() => navigate("/config")}
-          title="Notificações e configurações"
-        >
-          🔔
-          {unreadCount > 0 && <span className="notif-badge">{unreadCount}</span>}
-        </button>
+        {/* Sino + Dropdown */}
+        <div className="notif-wrap" ref={notifRef}>
+          <button
+            type="button"
+            className="notif-btn"
+            onClick={handleToggleNotif}
+            title="Notificações"
+            aria-label="Notificações"
+          >
+            🔔
+            {unreadCount > 0 && <span className="notif-badge">{unreadCount}</span>}
+          </button>
+
+          {notifOpen && (
+            <div className="notif-dropdown">
+              <div className="notif-dropdown__header">
+                <strong>Notificações</strong>
+                <button
+                  type="button"
+                  className="btn-secondary btn-inline"
+                  onClick={() => setNotifOpen(false)}
+                >
+                  Fechar
+                </button>
+              </div>
+
+              {notifLoading ? (
+                <p className="panel-subtitle" style={{ marginTop: 10 }}>
+                  Carregando...
+                </p>
+              ) : directNotifs.length === 0 ? (
+                <p className="panel-subtitle" style={{ marginTop: 10 }}>
+                  Sem notificações diretas.
+                </p>
+              ) : (
+                <ul className="notif-dropdown__list">
+                  {directNotifs.slice(0, 10).map((n) => (
+                    <li
+                      key={n.id ?? n.Id}
+                      className={`notif-top-item ${(n.lida ?? n.Lida) === false ? "unread" : ""}`}
+                    >
+                      <strong>{n.titulo ?? n.Titulo}</strong>
+                      <div className="notif-item__msg">{n.mensagem ?? n.Mensagem}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="notif-dropdown__footer">
+                <button
+                  type="button"
+                  className="btn-secondary btn-inline"
+                  onClick={() => {
+                    setNotifOpen(false);
+                    // aluno vê diretas no painel; prof/admin podem ver também lá se quiser
+                    navigate("/meu-painel");
+                  }}
+                >
+                  Ver todas
+                </button>
+
+                <button
+                  type="button"
+                  className="btn-secondary btn-inline"
+                  onClick={reloadNotifs}
+                >
+                  Atualizar
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Usuário / Dropdown */}
         <div className="user-menu" ref={menuRef}>
@@ -123,6 +225,7 @@ export default function AppHeader() {
             type="button"
             className="user-chip"
             onClick={() => setMenuOpen((v) => !v)}
+            title="Menu do usuário"
           >
             <span className="user-avatar">{(me?.nome?.[0] || "U").toUpperCase()}</span>
             <span className="user-name">{me?.nome || "Usuário"}</span>
@@ -137,7 +240,13 @@ export default function AppHeader() {
                 <div className="user-dropdown__role">{me?.role || ""}</div>
               </div>
 
-              <button type="button" onClick={() => { setMenuOpen(false); navigate("/config"); }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  navigate("/config");
+                }}
+              >
                 Configurações
               </button>
 
