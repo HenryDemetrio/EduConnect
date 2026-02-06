@@ -885,7 +885,7 @@ export default function PainelProfessor() {
               </div>
 
               <p className="panel-subtitle" style={{ marginTop: 6 }}>
-                Visual rápido das melhores <strong>médias</strong> já fechadas (referência para você acompanhar evolução).
+                Visual rápido das melhores <strong>médias</strong> já fechadas.
               </p>
 
               {loadingRanking ? (
