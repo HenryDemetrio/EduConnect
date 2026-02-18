@@ -2,84 +2,99 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ThemeToggle from "../components/ThemeToggle";
 import { useTheme } from "../context/ThemeContext";
+import { apiRequest } from "../services/api";
 
 export default function MatriculaPagamento() {
   const navigate = useNavigate();
   const { theme } = useTheme();
+
   const [file, setFile] = useState(null);
+  const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(false);
   const [sucesso, setSucesso] = useState(false);
 
-  function handleNext() {
-    if (!file) {
-      alert("Envie o comprovante de pagamento!");
+  async function handleNext() {
+    const id = localStorage.getItem("preMatriculaId");
+    if (!id) {
+      navigate("/matricula");
       return;
     }
 
-    setLoading(true);
+    if (!file) {
+      setErro("Envie o comprovante de pagamento (PDF).");
+      return;
+    }
 
-    setTimeout(() => {
+    try {
+      setErro("");
+      setLoading(true);
+
+      const fd = new FormData();
+      fd.append("comprovante", file);
+
+      // ✅ Backend: POST /pre-matriculas/{id}/pagamento (multipart)
+      await apiRequest(`/pre-matriculas/${id}/pagamento`, "POST", fd);
+
       setSucesso(true);
+
+      // limpa “sessão” de matrícula
+      localStorage.removeItem("preMatriculaId");
+
+      setTimeout(() => navigate("/login"), 800);
+    } catch (err) {
+      const msg =
+        err?.payload?.message ||
+        err?.payload?.error ||
+        err?.message ||
+        "Não foi possível enviar o comprovante.";
+      setErro(msg);
+    } finally {
       setLoading(false);
-
-      setTimeout(() => {
-        navigate("/login");
-      }, 2500);
-
-    }, 1500);
+    }
   }
 
   return (
     <div className="auth-page">
-
       <div className="partners-bar">
-        <img src="https://tivit.com/wp-content/themes/tivit-v2/assets/images/logo-tivit-almaviva.svg" alt="Logo TIVIT" />
-        <img src="https://cursos.jmarc.com.br/images/Logos/Alura_image.png" alt="Logo Alura" />
-        <img src="https://i0.wp.com/innovationweeksjc.com.br/wp-content/uploads/2024/08/Artboard-1.png?fit=800%2C378&ssl=1" alt="Logo FIAP" />
+        <img
+          src="https://tivit.com/wp-content/themes/tivit-v2/assets/images/logo-tivit-almaviva.svg"
+          alt="Logo TIVIT"
+        />
+        <img
+          src="https://cursos.jmarc.com.br/images/Logos/Alura_image.png"
+          alt="Logo Alura"
+        />
+        <img
+          src="https://i0.wp.com/innovationweeksjc.com.br/wp-content/uploads/2024/08/Artboard-1.png?fit=800%2C378&ssl=1"
+          alt="Logo FIAP"
+        />
       </div>
 
       <div className="auth-card">
-
-        <div className="auth-header-top">
-          <img
-            className="app-logo"
-            src={theme === "dark" ? "/educonnect-logo-dark.svg" : "/educonnect-logo.svg"}
-            alt="Logo EduConnect"
-          />
+        <div className="auth-card__header">
+          <h2>Pagamento</h2>
           <ThemeToggle />
         </div>
 
-        <h2 className="auth-title">Etapa 3 - Pagamento</h2>
-        <br />
         <p className="auth-subtitle">
-          Envie o comprovante de pagamento (PDF ou imagem).
+          Envie o comprovante em PDF. Após isso, o Admin aprova sua matrícula.
         </p>
-        <br />
 
-        <div className="form-card">
-          <label>Comprovante de pagamento</label>
-          <input
-            type="file"
-            accept=".pdf,.jpg,.jpeg,.png"
-            onChange={(e) => setFile(e.target.files[0])}
-          />
+        {erro ? <div className="settings-alert error">{erro}</div> : null}
+        {sucesso ? (
+          <div className="settings-alert ok">Comprovante enviado ✅</div>
+        ) : null}
+
+        <div className="auth-form">
+          <div className="form-field">
+            <label>Comprovante de pagamento (PDF) *</label>
+            <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          </div>
 
           <button className="btn-primary" onClick={handleNext} disabled={loading}>
-            {loading ? "Processando..." : "Finalizar matrícula →"}
+            {loading ? "Enviando..." : "Finalizar"}
           </button>
         </div>
-
-        {/* Caixa de sucesso */}
-        {sucesso && (
-          <div className="success-box fade-in">
-            <strong>Pagamento enviado!</strong>
-            <p>
-              Sua matrícula será analisada e, após aprovação, você receberá um
-              e-mail com seu RA.
-            </p>
-          </div>
-        )}
-
       </div>
     </div>
   );
