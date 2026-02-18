@@ -1,154 +1,141 @@
-import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
-import ThemeToggle from '../components/ThemeToggle'
-import { useTheme } from '../context/ThemeContext'
+import { useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import ThemeToggle from "../components/ThemeToggle";
+import { useTheme } from "../context/ThemeContext";
+import { apiJson } from "../services/api";
 
 export default function Matricula() {
-  const navigate = useNavigate()
-  const { theme } = useTheme()
+  const navigate = useNavigate();
+  const { theme } = useTheme();
 
-  const [nome, setNome] = useState('')
-  const [email, setEmail] = useState('')
-  const [telefone, setTelefone] = useState('')
-  const [dataNasc, setDataNasc] = useState('')
-  const [endereco, setEndereco] = useState('')
-  const [erro, setErro] = useState('')
-  const [sucesso, setSucesso] = useState(false)
-  const [loading, setLoading] = useState(false)
+  const [nome, setNome] = useState("");
+  const [email, setEmail] = useState("");
+  const [telefone, setTelefone] = useState("");
+  const [dataNasc, setDataNasc] = useState("");
+  const [endereco, setEndereco] = useState("");
 
-  function handleSubmit(e) {
-    e.preventDefault()
+  const [erro, setErro] = useState("");
+  const [sucesso, setSucesso] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
 
     if (!nome || !email || !telefone || !dataNasc || !endereco) {
-      setErro('Preencha todos os campos obrigatórios.')
-      return
+      setErro("Preencha todos os campos obrigatórios.");
+      return;
     }
 
-    setErro('')
-    setLoading(true)
+    try {
+      setErro("");
+      setLoading(true);
 
-    setTimeout(() => {
-      setSucesso(true)
-      setLoading(false)
+      // ✅ Backend: POST /pre-matriculas
+      const resp = await apiJson("/pre-matriculas", "POST", {
+        nome,
+        email,
+        telefone,
+        dataNasc, // "YYYY-MM-DD"
+        endereco,
+      });
 
-      setTimeout(() => {
-        navigate('/matricula-efetivacao')   // ✔ ROTA CORRETA AQUI
-      }, 2000)
+      const id = resp?.id ?? resp?.preMatriculaId;
+      if (!id) throw new Error("Resposta do servidor sem ID da pré-matrícula.");
 
-    }, 1500)
+      localStorage.setItem("preMatriculaId", String(id));
+
+      setSucesso(true);
+      setTimeout(() => navigate("/matricula-efetivacao"), 600);
+    } catch (err) {
+      const msg =
+        err?.payload?.message ||
+        err?.payload?.error ||
+        err?.message ||
+        "Não foi possível iniciar sua matrícula.";
+      setErro(msg);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <div className="auth-page">
-
       <div className="partners-bar">
-        <img src="https://tivit.com/wp-content/themes/tivit-v2/assets/images/logo-tivit-almaviva.svg" alt="Logo TIVIT"/>
-        <img src="https://cursos.jmarc.com.br/images/Logos/Alura_image.png" alt="Logo Alura"/>
-        <img src="https://i0.wp.com/innovationweeksjc.com.br/wp-content/uploads/2024/08/Artboard-1.png?fit=800%2C378&ssl=1" alt="Logo FIAP"/>
+        <img
+          src="https://tivit.com/wp-content/themes/tivit-v2/assets/images/logo-tivit-almaviva.svg"
+          alt="Logo TIVIT"
+        />
+        <img
+          src="https://cursos.jmarc.com.br/images/Logos/Alura_image.png"
+          alt="Logo Alura"
+        />
+        <img
+          src="https://i0.wp.com/innovationweeksjc.com.br/wp-content/uploads/2024/08/Artboard-1.png?fit=800%2C378&ssl=1"
+          alt="Logo FIAP"
+        />
       </div>
 
       <div className="auth-card">
-
-        <div className="auth-header-top">
-          <img
-            className="app-logo"
-            src={theme === 'dark' ? '/educonnect-logo-dark.svg' : '/educonnect-logo.svg'}
-            alt="Logo EduConnect"
-          />
+        <div className="auth-card__header">
+          <h2>Pré-matrícula</h2>
           <ThemeToggle />
         </div>
 
-        <div className="auth-header">
-          <span className="auth-tag">Matrícula online</span>
-          <h1 className="auth-title">Etapa 1 - Inscrição</h1>
-          <p className="auth-subtitle">
-            Preencha seus dados pessoais e continue para o envio dos documentos.
-          </p>
-        </div>
+        <p className="auth-subtitle">
+          Preencha seus dados para iniciar o processo.
+        </p>
 
-        <form className="auth-form" onSubmit={handleSubmit} noValidate>
-          
-          <div className="auth-field">
-            <label>Nome completo</label>
-            <input
-              type="text"
-              value={nome}
-              onChange={e => setNome(e.target.value)}
-              placeholder="Seu nome"
-            />
+        {erro ? <div className="settings-alert error">{erro}</div> : null}
+        {sucesso ? (
+          <div className="settings-alert ok">Etapa 1 concluída ✅</div>
+        ) : null}
+
+        <form onSubmit={handleSubmit} className="auth-form">
+          <div className="form-field">
+            <label>Nome completo *</label>
+            <input value={nome} onChange={(e) => setNome(e.target.value)} />
           </div>
 
-          <div className="auth-field">
-            <label>E-mail</label>
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="voce@exemplo.com"
-            />
+          <div className="form-grid">
+            <div className="form-field">
+              <label>E-mail *</label>
+              <input value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+
+            <div className="form-field">
+              <label>Telefone *</label>
+              <input value={telefone} onChange={(e) => setTelefone(e.target.value)} />
+            </div>
           </div>
 
-          <div className="auth-field">
-            <label>Telefone</label>
-            <input
-              type="text"
-              value={telefone}
-              onChange={e => setTelefone(e.target.value)}
-              placeholder="(11) 99999-0000"
-            />
+          <div className="form-grid">
+            <div className="form-field">
+              <label>Data de nascimento *</label>
+              <input
+                type="date"
+                value={dataNasc}
+                onChange={(e) => setDataNasc(e.target.value)}
+              />
+            </div>
+
+            <div className="form-field">
+              <label>Endereço *</label>
+              <input value={endereco} onChange={(e) => setEndereco(e.target.value)} />
+            </div>
           </div>
 
-          <div className="auth-field">
-            <label>Data de nascimento</label>
-            <input
-              type="text"
-              placeholder="dd/mm/yyyy"
-              value={dataNasc}
-              onChange={(e) => {
-                let value = e.target.value;
-                value = value.replace(/\D/g, "");
+          <button className="btn-primary" disabled={loading}>
+            {loading ? "Enviando..." : "Continuar"}
+          </button>
 
-                if (value.length > 2) value = value.replace(/(\d{2})(\d)/, "$1/$2");
-                if (value.length > 5) value = value.replace(/(\d{2})\/(\d{2})(\d)/, "$1/$2/$3");
-
-                setDataNasc(value.slice(0, 10));
-              }}
-              maxLength={10}
-            />
-          </div>
-
-          <div className="auth-field">
-            <label>Endereço completo</label>
-            <input
-              type="text"
-              value={endereco}
-              onChange={e => setEndereco(e.target.value)}
-              placeholder="Rua, número, bairro, cidade"
-            />
-          </div>
-
-          {erro && <p style={{color:'#b91c1c', fontSize:'0.8rem'}}>{erro}</p>}
-
-          <div className="auth-actions">
-            <button type="submit" className="btn-primary" disabled={loading}>
-              {loading ? "Processando..." : "Continuar para documentos →"}
-            </button>
+          <div className="auth-footer">
+            <span>Já tem conta?</span>{" "}
+            <Link to="/login" className="settings-link">
+              Entrar
+            </Link>
           </div>
         </form>
-
-        {sucesso && (
-          <div className="success-box fade-in">
-            <strong>Dados enviados!</strong>
-            <p>Redirecionando para o envio de documentos…</p>
-          </div>
-        )}
-
-        <div className="auth-footer">
-          <span>Já é aluno? </span>
-          <Link to="/login">Ir para login</Link>
-        </div>
-
       </div>
     </div>
-  )
+  );
 }
