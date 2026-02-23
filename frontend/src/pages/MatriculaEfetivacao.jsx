@@ -1,28 +1,29 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import ThemeToggle from "../components/ThemeToggle";
 import { useTheme } from "../context/ThemeContext";
-import { apiJson } from "../services/api";
+import { apiRequest } from "../services/api";
 
-export default function Matricula() {
+export default function MatriculaEfetivacao() {
   const navigate = useNavigate();
   const { theme } = useTheme();
 
-  const [nome, setNome] = useState("");
-  const [email, setEmail] = useState("");
-  const [telefone, setTelefone] = useState("");
-  const [dataNasc, setDataNasc] = useState("");
-  const [endereco, setEndereco] = useState("");
+  const [rgCpf, setRgCpf] = useState(null);
+  const [escolaridade, setEscolaridade] = useState(null);
 
   const [erro, setErro] = useState("");
-  const [sucesso, setSucesso] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [sucesso, setSucesso] = useState(false);
 
-  async function handleSubmit(e) {
-    e.preventDefault();
+  async function handleNext() {
+    const id = localStorage.getItem("preMatriculaId");
+    if (!id) {
+      navigate("/matricula");
+      return;
+    }
 
-    if (!nome || !email || !telefone || !dataNasc || !endereco) {
-      setErro("Preencha todos os campos obrigatórios.");
+    if (!rgCpf || !escolaridade) {
+      setErro("Envie RG/CPF e Comprovante de Escolaridade (PDF).");
       return;
     }
 
@@ -30,28 +31,23 @@ export default function Matricula() {
       setErro("");
       setLoading(true);
 
-      // ✅ Backend: POST /pre-matriculas
-      const resp = await apiJson("/pre-matriculas", "POST", {
-        nome,
-        email,
-        telefone,
-        dataNasc, // "YYYY-MM-DD"
-        endereco,
+      const fd = new FormData();
+      fd.append("rgCpf", rgCpf);
+      fd.append("escolaridade", escolaridade);
+
+      await apiRequest(`/pre-matriculas/${id}/documentos`, {
+        method: "POST",
+        body: fd,
       });
 
-      const id = resp?.id ?? resp?.preMatriculaId;
-      if (!id) throw new Error("Resposta do servidor sem ID da pré-matrícula.");
-
-      localStorage.setItem("preMatriculaId", String(id));
-
       setSucesso(true);
-      setTimeout(() => navigate("/matricula-efetivacao"), 600);
+      setTimeout(() => navigate("/matricula-pagamento"), 600);
     } catch (err) {
       const msg =
         err?.payload?.message ||
         err?.payload?.error ||
         err?.message ||
-        "Não foi possível iniciar sua matrícula.";
+        "Não foi possível enviar os documentos.";
       setErro(msg);
     } finally {
       setLoading(false);
@@ -77,64 +73,40 @@ export default function Matricula() {
 
       <div className="auth-card">
         <div className="auth-card__header">
-          <h2>Pré-matrícula</h2>
+          <h2>Efetivação</h2>
           <ThemeToggle />
         </div>
 
-        <p className="auth-subtitle">
-          Preencha seus dados para iniciar o processo.
-        </p>
+        <p className="auth-subtitle">Envie os documentos obrigatórios em PDF.</p>
 
         {erro ? <div className="settings-alert error">{erro}</div> : null}
         {sucesso ? (
-          <div className="settings-alert ok">Etapa 1 concluída ✅</div>
+          <div className="settings-alert ok">Etapa 2 concluída ✅</div>
         ) : null}
 
-        <form onSubmit={handleSubmit} className="auth-form">
+        <div className="auth-form">
           <div className="form-field">
-            <label>Nome completo *</label>
-            <input value={nome} onChange={(e) => setNome(e.target.value)} />
+            <label>RG/CPF (PDF) *</label>
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => setRgCpf(e.target.files?.[0] ?? null)}
+            />
           </div>
 
-          <div className="form-grid">
-            <div className="form-field">
-              <label>E-mail *</label>
-              <input value={email} onChange={(e) => setEmail(e.target.value)} />
-            </div>
-
-            <div className="form-field">
-              <label>Telefone *</label>
-              <input value={telefone} onChange={(e) => setTelefone(e.target.value)} />
-            </div>
+          <div className="form-field">
+            <label>Comprovante de escolaridade (PDF) *</label>
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => setEscolaridade(e.target.files?.[0] ?? null)}
+            />
           </div>
 
-          <div className="form-grid">
-            <div className="form-field">
-              <label>Data de nascimento *</label>
-              <input
-                type="date"
-                value={dataNasc}
-                onChange={(e) => setDataNasc(e.target.value)}
-              />
-            </div>
-
-            <div className="form-field">
-              <label>Endereço *</label>
-              <input value={endereco} onChange={(e) => setEndereco(e.target.value)} />
-            </div>
-          </div>
-
-          <button className="btn-primary" disabled={loading}>
+          <button className="btn-primary" onClick={handleNext} disabled={loading}>
             {loading ? "Enviando..." : "Continuar"}
           </button>
-
-          <div className="auth-footer">
-            <span>Já tem conta?</span>{" "}
-            <Link to="/login" className="settings-link">
-              Entrar
-            </Link>
-          </div>
-        </form>
+        </div>
       </div>
     </div>
   );

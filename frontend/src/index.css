@@ -140,7 +140,10 @@ body[data-theme="dark"] .partners-bar img[alt="Logo Alura"] {
   box-shadow: var(--shadow);
 }
 
-.auth-header { margin-bottom: 18px; }
+.auth-header { 
+  margin-bottom: 18px; 
+  margin-top: -20px;
+}
 
 .auth-tag {
   display: inline-flex;
