@@ -21,17 +21,26 @@ import CadastroProfessor from "./pages/CadastroProfessor";
 
 // Todos
 import Configuracoes from "./pages/Configuracoes";
+
+// Matrícula (público)
 import Matricula from "./pages/Matricula.jsx";
+import MatriculaEfetivacao from "./pages/MatriculaEfetivacao.jsx";
+import MatriculaPagamento from "./pages/MatriculaPagamento.jsx";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+
+      {/* Matrícula (público) */}
       <Route path="/matricula" element={<Matricula />} />
+      <Route path="/matricula-efetivacao" element={<MatriculaEfetivacao />} />
+      <Route path="/matricula-pagamento" element={<MatriculaPagamento />} />
 
       {/* autenticado */}
       <Route element={<RequireAuth />}>
         <Route element={<AppLayout />}>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/config" element={<Configuracoes />} />
 
@@ -57,7 +66,7 @@ export default function App() {
             <Route path="/admin/alunos/novo" element={<CadastroAluno />} />
             <Route path="/admin/alunos/:id/editar" element={<CadastroAluno />} />
 
-            {/* ✅ PROFESSORES no mesmo layout */}
+            {/*  PROFESSORES */}
             <Route path="/admin/professores" element={<ListaProfessores />} />
             <Route path="/admin/professores/novo" element={<CadastroProfessor />} />
             <Route path="/admin/professores/:id/editar" element={<CadastroProfessor />} />

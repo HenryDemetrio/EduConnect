@@ -13,41 +13,29 @@ export default function MatriculaPagamento() {
   const [loading, setLoading] = useState(false);
   const [sucesso, setSucesso] = useState(false);
 
-  async function handleNext() {
+  async function handleFinalizar() {
     const id = localStorage.getItem("preMatriculaId");
-    if (!id) {
-      navigate("/matricula");
-      return;
-    }
+    if (!id) return navigate("/matricula");
 
-    if (!file) {
-      setErro("Envie o comprovante de pagamento (PDF).");
-      return;
-    }
+    if (!file) return setErro("Envie o comprovante de pagamento (PDF).");
 
     try {
       setErro("");
       setLoading(true);
 
       const fd = new FormData();
-      fd.append("comprovante", file);
+      fd.append("Comprovante", file); // PascalCase pra bater com DTO
 
-      // ✅ Backend: POST /pre-matriculas/{id}/pagamento (multipart)
-      await apiRequest(`/pre-matriculas/${id}/pagamento`, "POST", fd);
+      await apiRequest(`/pre-matriculas/${id}/pagamento`, {
+        method: "POST",
+        body: fd,
+      });
 
       setSucesso(true);
-
-      // limpa “sessão” de matrícula
       localStorage.removeItem("preMatriculaId");
-
-      setTimeout(() => navigate("/login"), 800);
+      setTimeout(() => navigate("/login"), 700);
     } catch (err) {
-      const msg =
-        err?.payload?.message ||
-        err?.payload?.error ||
-        err?.message ||
-        "Não foi possível enviar o comprovante.";
-      setErro(msg);
+      setErro(err?.payload?.message || err?.message || "Falha ao enviar comprovante.");
     } finally {
       setLoading(false);
     }
@@ -77,21 +65,23 @@ export default function MatriculaPagamento() {
         </div>
 
         <p className="auth-subtitle">
-          Envie o comprovante em PDF. Após isso, o Admin aprova sua matrícula.
+          Envie o comprovante em PDF. Depois o Admin aprova sua matrícula.
         </p>
 
         {erro ? <div className="settings-alert error">{erro}</div> : null}
-        {sucesso ? (
-          <div className="settings-alert ok">Comprovante enviado ✅</div>
-        ) : null}
+        {sucesso ? <div className="settings-alert ok">Etapa 3 concluída ✅</div> : null}
 
         <div className="auth-form">
           <div className="form-field">
             <label>Comprovante de pagamento (PDF) *</label>
-            <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
           </div>
 
-          <button className="btn-primary" onClick={handleNext} disabled={loading}>
+          <button className="btn-primary" onClick={handleFinalizar} disabled={loading}>
             {loading ? "Enviando..." : "Finalizar"}
           </button>
         </div>

@@ -21,6 +21,7 @@ namespace EduConnect.API.Data
         public DbSet<Notificacao> Notificacoes => Set<Notificacao>();
         public DbSet<Tarefa> Tarefas => Set<Tarefa>();
         public DbSet<EntregaTarefa> EntregasTarefas => Set<EntregaTarefa>();
+        public DbSet<PreMatricula> PreMatriculas => Set<PreMatricula>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -214,7 +215,7 @@ namespace EduConnect.API.Data
                 // existente
                 e.HasIndex(x => new { x.TurmaDisciplinaId, x.DataEntrega });
 
-                // ✅ regra robusta: não pode duplicar Tipo+Numero dentro da mesma TurmaDisciplina
+                // regra robusta: não pode duplicar Tipo+Numero dentro da mesma TurmaDisciplina
                 // (filtrado pra não quebrar registros antigos com Numero=0)
                 e.HasIndex(x => new { x.TurmaDisciplinaId, x.Tipo, x.Numero })
                   .IsUnique()
@@ -244,6 +245,23 @@ namespace EduConnect.API.Data
 
                 // 1 entrega por aluno por tarefa (o aluno pode reenviar = update)
                 e.HasIndex(x => new { x.TarefaId, x.AlunoId }).IsUnique();
+
+            // PRÉ MATRICULA 
+            modelBuilder.Entity<PreMatricula>(e =>
+            {
+                e.Property(x => x.Nome).IsRequired().HasMaxLength(200);
+                e.Property(x => x.Email).IsRequired().HasMaxLength(200);
+                e.Property(x => x.Telefone).IsRequired().HasMaxLength(50);
+                e.Property(x => x.Endereco).IsRequired().HasMaxLength(300);
+
+                e.Property(x => x.Status).IsRequired().HasMaxLength(30);
+
+                e.Property(x => x.RgCpfUrl).HasMaxLength(500);
+                e.Property(x => x.EscolaridadeUrl).HasMaxLength(500);
+                e.Property(x => x.ComprovantePagamentoUrl).HasMaxLength(500);
+
+                e.HasIndex(x => x.Email);
+                });
             });
 
             base.OnModelCreating(modelBuilder);
