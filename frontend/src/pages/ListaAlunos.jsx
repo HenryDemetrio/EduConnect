@@ -4,6 +4,8 @@ import AdminListPage from "../components/AdminListPage";
 import { apiJson } from "../services/api";
 import { useTheme } from "../context/ThemeContext";
 
+const EVT_TURMAS_CHANGED = "educonnect:turmas-changed";
+
 function inputStyle(theme) {
   return {
     width: "100%",
@@ -16,106 +18,86 @@ function inputStyle(theme) {
   };
 }
 
-const EVT_TURMAS_CHANGED = "educonnect:turmas-changed";
-
 function MatriculasPanel() {
   const { theme } = useTheme();
 
-  const [turmas, setTurmas] = useState([]);
-  const [alunos, setAlunos] = useState([]);
-  const [matriculas, setMatriculas] = useState([]);
+  const API_BASE = import.meta.env.VITE_API_URL || "https://localhost:5230";
 
-  const [nova, setNova] = useState({ alunoId: "", turmaId: "" });
+  const [turmas, setTurmas] = useState([]);
+  const [pendentes, setPendentes] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [erro, setErro] = useState("");
 
-  const [fadingIds, setFadingIds] = useState(() => new Set());
+  // form de aprovação por linha
+  const [formMap, setFormMap] = useState({}); // { [preId]: { ra: "", turmaId: "" } }
 
-  async function carregarTudo() {
+  async function carregar() {
     try {
       setLoading(true);
       setErro("");
       setMsg("");
 
-      const [t, a, m] = await Promise.all([
+      const [t, p] = await Promise.all([
         apiJson("/turmas"),
-        apiJson("/alunos"),
-        apiJson("/matriculas/pendentes"),
+        apiJson("/admin/pre-matriculas/pendentes"),
       ]);
 
       setTurmas(Array.isArray(t) ? t : []);
-      setAlunos(Array.isArray(a) ? a : []);
-      setMatriculas(Array.isArray(m) ? m : []);
+      setPendentes(Array.isArray(p) ? p : []);
+
+      // inicializa form por item
+      const initial = {};
+      (Array.isArray(p) ? p : []).forEach((x) => {
+        initial[x.id] = { ra: "", turmaId: "" };
+      });
+      setFormMap(initial);
     } catch (e) {
-      setErro(e?.payload?.message || "Não foi possível carregar matrículas.");
+      setErro(e?.payload?.message || "Não foi possível carregar pré-matrículas pendentes.");
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    carregarTudo();
-
-    const onChanged = () => carregarTudo();
-    window.addEventListener(EVT_TURMAS_CHANGED, onChanged);
-    return () => window.removeEventListener(EVT_TURMAS_CHANGED, onChanged);
+    carregar();
   }, []);
 
-  const pendentes = useMemo(() => {
-    return matriculas.filter((m) => {
-      const status = (m.statusPagamento || m.status || "").toString().toLowerCase();
-      const aprovadoEm = m.pagamentoAprovadoEm || m.aprovadoEm || null;
+  function setRow(id, patch) {
+    setFormMap((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), ...patch } }));
+  }
 
-      if (status) return status.includes("pend");
-      if (aprovadoEm) return false;
-      return true;
-    });
-  }, [matriculas]);
+  function fileUrl(path) {
+    if (!path) return "";
+    if (path.startsWith("http")) return path;
+    return `${API_BASE}${path}`;
+  }
 
-  async function criarMatricula() {
+  async function aprovar(preId) {
     setErro("");
     setMsg("");
 
-    if (!nova.alunoId || !nova.turmaId) {
-      setErro("Selecione um aluno e uma turma.");
+    const row = formMap[preId] || { ra: "", turmaId: "" };
+    if (!row.ra?.trim() || !row.turmaId) {
+      setErro("Informe RA e selecione a turma para aprovar.");
       return;
     }
 
     try {
-      await apiJson("/matriculas", "POST", {
-        alunoId: Number(nova.alunoId),
-        turmaId: Number(nova.turmaId),
+      const resp = await apiJson(`/admin/pre-matriculas/${preId}/aprovar`, "POST", {
+        ra: row.ra.trim(),
+        turmaId: Number(row.turmaId),
       });
-      setMsg("Matrícula criada (pendente).");
-      setNova({ alunoId: "", turmaId: "" });
-      await carregarTudo();
+
+      // remove da lista
+      setPendentes((prev) => prev.filter((x) => x.id !== preId));
+
+      setMsg(
+        `Pré-matrícula aprovada. Login do aluno: ${resp?.usuarioEmail || "-"} | senha inicial: ${resp?.senhaInicial || "-"}`
+      );
     } catch (e) {
-      setErro(e?.payload?.message || "Erro ao criar matrícula.");
-    }
-  }
-
-  async function aprovarPagamento(id) {
-    setErro("");
-    setMsg("");
-
-    try {
-      const resp = await apiJson(`/matriculas/${id}/aprovar-pagamento`, "POST");
-
-      setFadingIds((prev) => new Set(prev).add(id));
-      setTimeout(() => {
-        setMatriculas((prev) => prev.filter((m) => m.id !== id));
-        setFadingIds((prev) => {
-          const n = new Set(prev);
-          n.delete(id);
-          return n;
-        });
-      }, 260);
-
-      const w = resp?.warning ? ` (${resp.warning})` : "";
-      setMsg(`Pagamento aprovado. E-mail: ${resp?.emailInstitucional || "-"}${w}`);
-    } catch (e) {
-      setErro(e?.payload?.message || "Erro ao aprovar pagamento.");
+      setErro(e?.payload?.message || "Erro ao aprovar pré-matrícula.");
     }
   }
 
@@ -123,56 +105,17 @@ function MatriculasPanel() {
     <section className="panel" style={{ marginTop: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
         <div>
-          <h2 className="dashboard-title" style={{ fontSize: "1.05rem", marginBottom: 4 }}>Matrículas</h2>
+          <h2 className="dashboard-title" style={{ fontSize: "1.05rem", marginBottom: 4 }}>
+            Matrículas pendentes (Pré-matrícula)
+          </h2>
           <p className="dashboard-subtitle">
-            Crie matrícula e aprove o pagamento para disparar o Power Automate.
+            Lista de alunos que enviaram documentos + pagamento e aguardam aprovação.
           </p>
         </div>
 
-        <button className="btn-secondary btn-small" type="button" onClick={carregarTudo} disabled={loading}>
+        <button className="btn-secondary btn-small" type="button" onClick={carregar} disabled={loading}>
           Atualizar
         </button>
-      </div>
-
-      <div className="form-grid" style={{ marginTop: 12 }}>
-        <div className="form-field">
-          <label>Aluno</label>
-          <select
-            value={nova.alunoId}
-            onChange={(e) => setNova((p) => ({ ...p, alunoId: e.target.value }))}
-            style={inputStyle(theme)}
-          >
-            <option value="">Selecione...</option>
-            {alunos.map((a) => (
-              <option key={a.id} value={a.id}>
-                {(a.nome || "").trim()} — {a.ra}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="form-field">
-          <label>Turma</label>
-          <select
-            value={nova.turmaId}
-            onChange={(e) => setNova((p) => ({ ...p, turmaId: e.target.value }))}
-            style={inputStyle(theme)}
-          >
-            <option value="">Selecione...</option>
-            {turmas.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.codigo} — {t.nome}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="form-field" style={{ justifyContent: "end" }}>
-          <label style={{ opacity: 0 }}>.</label>
-          <button className="btn-primary btn-small" type="button" onClick={criarMatricula} disabled={loading}>
-            Criar matrícula
-          </button>
-        </div>
       </div>
 
       {erro && <p className="form-error" style={{ marginTop: 10 }}>{erro}</p>}
@@ -182,28 +125,77 @@ function MatriculasPanel() {
         <table className="list-table">
           <thead>
             <tr>
-              <th>Aluno</th>
-              <th>Turma</th>
+              <th>Nome</th>
+              <th>Contato</th>
+              <th>Docs</th>
+              <th style={{ width: 130 }}>RA</th>
+              <th style={{ width: 260 }}>Turma</th>
               <th className="col-actions">Ações</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={3} className="table-empty">Carregando...</td></tr>
+              <tr><td colSpan={6} className="table-empty">Carregando...</td></tr>
             )}
 
             {!loading && pendentes.length === 0 && (
-              <tr><td colSpan={3} className="table-empty">Nenhuma matrícula pendente.</td></tr>
+              <tr><td colSpan={6} className="table-empty">Nenhuma pré-matrícula pendente.</td></tr>
             )}
 
-            {!loading && pendentes.map((m) => (
-              <tr key={m.id} className={fadingIds.has(m.id) ? "row-fade" : ""}>
-                <td>{m.alunoNome}</td>
-                <td>{m.turmaCodigo} — {m.turmaNome}</td>
+            {!loading && pendentes.map((p) => (
+              <tr key={p.id}>
+                <td>
+                  <div style={{ fontWeight: 650 }}>{p.nome}</div>
+                  <div style={{ opacity: 0.75, fontSize: 12 }}>ID #{p.id}</div>
+                </td>
+
+                <td>
+                  <div>{p.email}</div>
+                  <div style={{ opacity: 0.75, fontSize: 12 }}>{p.telefone}</div>
+                </td>
+
+                <td>
+                  <div className="row-actions" style={{ gap: 8 }}>
+                    <a className="btn-ghost btn-small" href={fileUrl(p.rgCpfUrl)} target="_blank" rel="noreferrer">
+                      RG/CPF
+                    </a>
+                    <a className="btn-ghost btn-small" href={fileUrl(p.escolaridadeUrl)} target="_blank" rel="noreferrer">
+                      Escolaridade
+                    </a>
+                    <a className="btn-ghost btn-small" href={fileUrl(p.comprovantePagamentoUrl)} target="_blank" rel="noreferrer">
+                      Pagamento
+                    </a>
+                  </div>
+                </td>
+
+                <td>
+                  <input
+                    style={inputStyle(theme)}
+                    value={formMap[p.id]?.ra ?? ""}
+                    onChange={(e) => setRow(p.id, { ra: e.target.value })}
+                    placeholder="Ex: 2026A001"
+                  />
+                </td>
+
+                <td>
+                  <select
+                    style={inputStyle(theme)}
+                    value={formMap[p.id]?.turmaId ?? ""}
+                    onChange={(e) => setRow(p.id, { turmaId: e.target.value })}
+                  >
+                    <option value="">Selecione...</option>
+                    {turmas.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.codigo} — {t.nome}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+
                 <td className="col-actions">
                   <div className="row-actions">
-                    <button className="btn-ghost btn-small" type="button" onClick={() => aprovarPagamento(m.id)}>
-                      Aprovar pagamento
+                    <button className="btn-ghost btn-small" type="button" onClick={() => aprovar(p.id)}>
+                      Aprovar
                     </button>
                   </div>
                 </td>
