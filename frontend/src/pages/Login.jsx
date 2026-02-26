@@ -128,10 +128,15 @@ export default function Login() {
 
         <div className="auth-footer">
           <div style={{ marginBottom: 4 }}>
-            <Link to="/recuperar-senha">Esqueceu sua senha?</Link>
+            <Link to="/recuperar-senha" className="authlink">
+              Esqueceu sua senha?
+            </Link>
           </div>
+
           <span>Ainda não tem acesso? </span>
-          <Link to="/">Matricule-se agora</Link>
+          <Link to="/matricula" className="authlink">
+            Matricule-se agora!
+          </Link>
         </div>
       </div>
     </div>

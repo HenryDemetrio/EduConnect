@@ -3,6 +3,7 @@ using System.Security.Claims;
 using EduConnect.API.Auth;
 using EduConnect.API.Data;
 using EduConnect.API.DTOs;
+using EduConnect.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -16,11 +17,13 @@ namespace EduConnect.API.Controllers
     {
         private readonly EduConnectContext _ctx;
         private readonly JwtSettings _jwt;
+        private readonly PowerAutomateService _pa;
 
-        public AuthController(EduConnectContext ctx, IOptions<JwtSettings> jwt)
+        public AuthController(EduConnectContext ctx, IOptions<JwtSettings> jwt, PowerAutomateService pa)
         {
             _ctx = ctx;
             _jwt = jwt.Value;
+            _pa = pa;
         }
 
         // POST /auth/login
@@ -46,6 +49,69 @@ namespace EduConnect.API.Controllers
             });
         }
 
+        // ✅ POST /auth/forgot-password
+        // Dispara Power Automate com senha temporária (mesmo Flow do provisioning)
+        [HttpPost("forgot-password")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest req)
+        {
+            // resposta genérica (não vaza se email existe)
+            const string okMsg = "Se esse e-mail existir, enviamos instruções de recuperação. Verifique sua caixa de entrada.";
+
+            if (req == null || string.IsNullOrWhiteSpace(req.Email))
+                return Ok(new { message = okMsg });
+
+            var email = req.Email.Trim().ToLowerInvariant();
+
+            // tenta achar pelo email de login (institucional)
+            var user = await _ctx.Usuarios.FirstOrDefaultAsync(u => u.Email.ToLower() == email);
+
+            // se não achou, tenta achar pelo emailContato de aluno e pegar o usuario
+            if (user == null)
+            {
+                var aluno = await _ctx.Alunos.AsNoTracking().FirstOrDefaultAsync(a => a.EmailContato.ToLower() == email);
+                if (aluno != null)
+                    user = await _ctx.Usuarios.FirstOrDefaultAsync(u => u.Id == aluno.UsuarioId);
+            }
+
+            // se não achou, retorna genérico
+            if (user == null)
+                return Ok(new { message = okMsg });
+
+            // gera senha temporária (simples, suficiente pro projeto)
+            var senhaTemporaria = $"Edu@{Random.Shared.Next(100000, 999999)}";
+            user.SenhaHash = BCrypt.Net.BCrypt.HashPassword(senhaTemporaria);
+            await _ctx.SaveChangesAsync();
+
+            // descobre emailContato (se existir)
+            string emailContato = user.Email; // fallback
+            if (user.Role == "Aluno")
+            {
+                var aluno = await _ctx.Alunos.AsNoTracking().FirstOrDefaultAsync(a => a.UsuarioId == user.Id);
+                if (!string.IsNullOrWhiteSpace(aluno?.EmailContato))
+                    emailContato = aluno.EmailContato.Trim();
+            }
+
+            // dispara Power Automate (mesmo schema)
+            try
+            {
+                await _pa.SendProvisioningEmailAsync(new
+                {
+                    tipo = "RecuperacaoSenha",
+                    nome = user.Nome,
+                    emailContato = emailContato,
+                    emailInstitucional = user.Email,
+                    senhaTemporaria = senhaTemporaria
+                });
+            }
+            catch
+            {
+                // não quebra o fluxo pro usuário (evita enumerar e evita travar UX)
+                // se quiser, você pode logar a exception num logger depois
+            }
+
+            return Ok(new { message = okMsg });
+        }
 
         [Authorize]
         [HttpPut("password")]
@@ -74,7 +140,6 @@ namespace EduConnect.API.Controllers
             await _ctx.SaveChangesAsync();
             return Ok(new { message = "Senha alterada com sucesso." });
         }
-
 
         // GET /auth/me
         [HttpGet("me")]
@@ -106,5 +171,10 @@ namespace EduConnect.API.Controllers
                 Registro = professor?.Registro
             });
         }
+    }
+
+    public class ForgotPasswordRequest
+    {
+        public string Email { get; set; } = "";
     }
 }

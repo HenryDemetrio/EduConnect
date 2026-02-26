@@ -28,7 +28,6 @@ export default function AdminListPage({
   actionsLabel = "Ações",
   children,
 
-  // ✅ NOVOS
   toolbarExtra, // (theme) => JSX
   filterFn, // (item) => boolean
 }) {

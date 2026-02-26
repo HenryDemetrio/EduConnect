@@ -6,6 +6,14 @@ import AppLayout from "./layouts/AppLayout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 
+// Matrícula (público)
+import Matricula from "./pages/Matricula.jsx";
+import MatriculaEfetivacao from "./pages/MatriculaEfetivacao.jsx";
+import MatriculaPagamento from "./pages/MatriculaPagamento.jsx";
+
+// Recuperar senha (público)
+import RecuperarSenha from "./pages/RecuperarSenha.jsx";
+
 // Aluno
 import MeuPainelAluno from "./pages/MeuPainelAluno";
 
@@ -22,20 +30,17 @@ import CadastroProfessor from "./pages/CadastroProfessor";
 // Todos
 import Configuracoes from "./pages/Configuracoes";
 
-// Matrícula (público)
-import Matricula from "./pages/Matricula.jsx";
-import MatriculaEfetivacao from "./pages/MatriculaEfetivacao.jsx";
-import MatriculaPagamento from "./pages/MatriculaPagamento.jsx";
-
 export default function App() {
   return (
     <Routes>
+      {/* públicas */}
       <Route path="/login" element={<Login />} />
 
-      {/* Matrícula (público) */}
       <Route path="/matricula" element={<Matricula />} />
       <Route path="/matricula-efetivacao" element={<MatriculaEfetivacao />} />
       <Route path="/matricula-pagamento" element={<MatriculaPagamento />} />
+
+      <Route path="/recuperar-senha" element={<RecuperarSenha />} />
 
       {/* autenticado */}
       <Route element={<RequireAuth />}>
@@ -66,7 +71,6 @@ export default function App() {
             <Route path="/admin/alunos/novo" element={<CadastroAluno />} />
             <Route path="/admin/alunos/:id/editar" element={<CadastroAluno />} />
 
-            {/*  PROFESSORES */}
             <Route path="/admin/professores" element={<ListaProfessores />} />
             <Route path="/admin/professores/novo" element={<CadastroProfessor />} />
             <Route path="/admin/professores/:id/editar" element={<CadastroProfessor />} />
