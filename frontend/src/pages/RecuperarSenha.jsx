@@ -1,21 +1,46 @@
-import { Link } from 'react-router-dom'
-import ThemeToggle from '../components/ThemeToggle'
-import { useTheme } from '../context/ThemeContext'
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import ThemeToggle from "../components/ThemeToggle";
+import { useTheme } from "../context/ThemeContext";
+import { apiJson } from "../services/api";
 
 export default function RecuperarSenha() {
-  const { theme } = useTheme()
+  const { theme } = useTheme();
 
-  function handleSubmit(e) {
-    e.preventDefault()
-    // por enquanto, só simula envio
-    alert(
-      'Simulação: enviamos um link de recuperação para o e-mail informado.',
-    )
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [erro, setErro] = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setMsg("");
+    setErro("");
+
+    if (!email.trim()) {
+      setErro("Informe seu e-mail.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+    
+      await apiJson("/auth/forgot-password", "POST", { email: email.trim() });
+
+      setMsg("Se esse e-mail existir, enviamos um link de recuperação. Verifique sua caixa de entrada.");
+    } catch (e1) {
+      
+      setMsg(
+        "Recuperação ainda não está automatizada. Peça ao Admin para redefinir sua senha ou conecte este fluxo ao Power Automate."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <div className="auth-page">
-      {/* mesma barra de parceiros pra manter a identidade */}
       <div className="partners-bar">
         <img
           src="https://tivit.com/wp-content/themes/tivit-v2/assets/images/logo-tivit-almaviva.svg"
@@ -32,59 +57,38 @@ export default function RecuperarSenha() {
       </div>
 
       <div className="auth-card">
-        {/* header com logo EduConnect e toggle */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start',
-            marginBottom: 8,
-          }}
-        >
-          <img
-            className="app-logo"
-            src={
-              theme === 'dark'
-                ? '/educonnect-logo-dark.svg'
-                : '/educonnect-logo.svg'
-            }
-            alt="Logo EduConnect"
-          />
-
+        <div className="auth-card__header">
+          <h2>Recuperar senha</h2>
           <ThemeToggle />
         </div>
 
-        <div className="auth-header">
-          <span className="auth-tag">Recuperar acesso</span>
-          <h1 className="auth-title">Esqueceu sua senha?</h1>
-          <p className="auth-subtitle">
-            Informe seu e-mail institucional para receber um link de redefinição
-            de senha.
-          </p>
-        </div>
+        <p className="auth-subtitle">Informe seu e-mail para receber instruções.</p>
 
-        <form className="auth-form" onSubmit={handleSubmit} noValidate>
-          <div className="auth-field">
-            <label htmlFor="email">E-mail institucional</label>
+        {erro ? <div className="settings-alert error">{erro}</div> : null}
+        {msg ? <div className="settings-alert ok">{msg}</div> : null}
+
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <div className="form-field">
+            <label>E-mail</label>
             <input
-              id="email"
               type="email"
-              placeholder="seuemail@escola.com"
-              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="seuemail@educonnect.com"
             />
           </div>
 
-          <div className="auth-actions">
-            <button type="submit" className="btn-primary">
-              Enviar link de recuperação
-            </button>
+          <button className="btn-primary" type="submit" disabled={loading}>
+            {loading ? "Enviando..." : "Enviar link"}
+          </button>
+
+          <div style={{ marginTop: 10 }}>
+            <Link to="/login" className="auth-link">
+              Voltar para login
+            </Link>
           </div>
         </form>
-
-        <div className="auth-footer">
-          <Link to="/login">Voltar para o login</Link>
-        </div>
       </div>
     </div>
-  )
+  );
 }

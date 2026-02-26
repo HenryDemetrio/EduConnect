@@ -33,7 +33,7 @@ export function AuthProvider({ children }) {
     localStorage.setItem("token", resp.token);
     setToken(resp.token);
     await loadMe();
-    return resp; // contém role -> você já usa no Login.jsx
+    return resp; 
   }
 
   function logout() {
